@@ -32,8 +32,10 @@ accounts, no cloud, no telemetry.
   naming — it never silently clobbers an existing file.
 - **EXIF orientation is respected**, so portrait phone photos don't come out
   sideways.
-- Runs on **macOS, Windows and Linux** with the same Rust pipeline. No
-  ImageMagick, no Homebrew, no "install these 4 codecs first".
+- Runs on **macOS, Windows and Linux** with the same Rust pipeline — no
+  ImageMagick, no Homebrew, no "install these 4 codecs first". CI produces
+  installers for all three; runtime verification on Windows and macOS is still
+  pending (see [docs/BEHAVIOR.md](docs/BEHAVIOR.md)).
 
 ## Install
 
@@ -89,6 +91,19 @@ React + TypeScript (Vite)  ──invoke──▶  Rust / Tauri commands
 - Conversion runs on a bounded thread pool sized per output format; HEIC gets
   fewer workers because x265 already uses every core. Dimensions are probed in
   parallel during a scan.
+
+## Documentation
+
+The [docs](docs/) folder is the project's review trail:
+
+- [Architecture](docs/ARCHITECTURE.md) — modules, IPC, threading, output rules.
+- [Behavior](docs/BEHAVIOR.md) — user-facing behavior and a verification matrix
+  that is explicit about what has and has not been tested.
+- [Decisions](docs/DECISIONS.md) — why it is built this way, and the cost of
+  each choice.
+- [Build](docs/BUILD.md) — prerequisites, packaging, CI, troubleshooting.
+- [SSC handoff](docs/SSC-HANDOFF.md) — briefing for converting this prototype
+  into an SSC project (`ssc-plan` brownfield adoption).
 
 ## Privacy
 
