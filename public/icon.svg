@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="HEIC Image Converter">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="64" x2="928" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8ff2bd"/>
+      <stop offset="0.55" stop-color="#45d69a"/>
+      <stop offset="1" stop-color="#1fa876"/>
+    </linearGradient>
+    <linearGradient id="card" x1="300" y1="240" x2="700" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef7f1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
+
+  <!-- back card, peeking out to suggest a batch -->
+  <g transform="rotate(7 560 512)">
+    <rect x="356" y="232" width="430" height="520" rx="52" fill="#0c3b2a" opacity="0.30"/>
+  </g>
+
+  <!-- front photo -->
+  <g transform="rotate(-4 480 520)">
+    <rect x="240" y="236" width="440" height="528" rx="52" fill="url(#card)"/>
+    <circle cx="560" cy="360" r="42" fill="#1fa876" opacity="0.55"/>
+    <path d="M296 664 L420 486 L500 590 L556 522 L672 664 Z" fill="#12432f"/>
+    <rect x="240" y="676" width="440" height="88" rx="0" fill="#12432f"/>
+    <rect x="296" y="708" width="200" height="18" rx="9" fill="#8ff2bd" opacity="0.85"/>
+    <rect x="296" y="736" width="120" height="12" rx="6" fill="#8ff2bd" opacity="0.45"/>
+  </g>
+
+  <!-- conversion badge -->
+  <circle cx="716" cy="744" r="140" fill="#0c2a20" stroke="#8ff2bd" stroke-width="12"/>
+  <path d="M654 744 H776 M716 696 L776 744 L716 792" fill="none" stroke="#8ff2bd" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
