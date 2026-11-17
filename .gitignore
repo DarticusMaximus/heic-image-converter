@@ -28,3 +28,6 @@ src-tauri/target
 
 # Local screenshots
 /tmp
+
+# SSC framework artifacts stay local (private working trail)
+.ssc/
