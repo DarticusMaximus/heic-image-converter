@@ -169,19 +169,18 @@ What that proves and what it does not:
 - It proves the gates need no local build artifacts: no `node_modules`, `dist`,
   or `src-tauri/target` were copied in, and both test gates and the release
   build pass from scratch.
-- It does not prove the set of committed files is sufficient. `rsync` copies
-  untracked files too, so the copy is artifact-free, not a git checkout.
-- No run of the new three-job workflow has been observed: it is uncommitted, so
-  GitHub has not run it. The previous single-job workflow did run once on
-  GitHub — a successful push run on 2026-11-17 at commit `972c3d9` — so the
-  repository does have an `origin` remote
-  (`https://github.com/DarticusMaximus/heic-image-converter.git`), but that run
-  predates this feature and exercised the old workflow only. Every result above
-  is local.
-- The 236 s release build is a cold build on the development machine, about a
-  tenth of the 45-minute review threshold, so the `build` job's 60-minute
-  timeout stands. A GitHub `ubuntu-24.04` runner compiling the same dependency
-  graph will be slower.
+- The `rsync` copy alone does not prove the set of committed files is sufficient,
+  because it copies untracked files too. The hosted run below does prove it.
+- The three-job workflow has now run on GitHub. Commit `469b77d` ("Add the stage
+  00 test baseline and verification pass") was pushed to `main` on 2026-11-18 and
+  [run 44364382930](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44364382930)
+  went green on all three jobs from a fresh checkout: Frontend 12 s, Release
+  build 6 m 16 s, Rust 22 m 32 s (cold). Before that, the previous single-job
+  workflow ran once on 2026-11-17 at `972c3d9`; that run exercised the old
+  workflow only.
+- The release build took 236 s cold locally and 6 m 16 s on the hosted runner.
+  The Rust job's cold 22 m 32 s is about 56 % of its 40-minute timeout, so both
+  timeouts stand. Watch the Rust margin if the suite grows.
 
 ### Regenerating the fixture corpus
 

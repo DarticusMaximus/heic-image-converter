@@ -10,20 +10,23 @@
 |---|---|
 | Run date | 2026-11-18 |
 | Machine / session | Omarchy 4.5.0 on Linux 7.2.15-1-omarchy x86_64; Hyprland 0.56.2; WebKitGTK `webkit2gtk-4.1 2.54.1-1` |
-| Commit | `972c3d9` **plus 47 uncommitted entries** (see the dirty-tree note below) |
+| Commit | `972c3d9` **plus 47 uncommitted entries** at run time; committed afterwards as `469b77d` (see the dirty-tree note below) |
 | Binary | `src-tauri/target/release/heic-image-converter`, 15,093,664 bytes |
 | Binary SHA-256 | `a7168d4b7dd5109e26c39810802ce96f4d331c0ee8ada75a61753613f8035bd3` |
 | `npm test` | 2 test files passed, 37 tests passed |
 | `cargo test` | 42 passed, 0 failed, 1 ignored |
 | `scripts/ci.sh all` | exit code 0, 122.2 s wall clock |
+| Hosted CI | [run 44364382930](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44364382930) at `469b77d` — Frontend 12 s, Release build 6 m 16 s, Rust 22 m 32 s cold; all three jobs green |
 | Screenshot directory | `docs/verification/2026-11-18/` — seven app-window PNGs: `M2-drag`, `M3-quality-note`, `M4-settings`, `M5-results`, `M7-errors`, `M9-estimate`, `M10-cancel` |
 | Deferred rows | Windows build (stage 05), macOS build (stage 06), `.deb`/`.rpm`/AppImage launch (stage 04), no-network runtime capture (stage 04) |
 
-**Dirty-tree note.** `HEAD` is `972c3d9`, but that commit does **not** contain
-the code under test. Features 01–04 of stage 00 are intentionally uncommitted
-at the PM's direction, so the tested tree is `972c3d9` plus 47 uncommitted
-entries (47 before the run and 47 after it): the modified CI workflow, docs,
-`package.json` and its lockfile, `Cargo.toml` and `Cargo.lock`,
+**Dirty-tree note.** The run tested `HEAD` `972c3d9` plus 47 uncommitted entries:
+that commit did **not** contain the code under test, because features 01–04 of
+stage 00 were left uncommitted at the PM's direction. The tested tree was
+committed afterwards as `469b77d` ("Add the stage 00 test baseline and
+verification pass"), so that commit — not `972c3d9` — is the reproducing
+reference. The 47 entries were: the modified CI workflow, docs, `package.json`
+and its lockfile, `Cargo.toml` and `Cargo.lock`,
 `src-tauri/src/{convert,lib,scan}.rs`, `src/App.tsx`, `tsconfig.node.json`, the
 new `scripts/manual-check.sh`, and the new test and fixture files
 (`backend_integration.rs`, `fixture_corpus.rs`, `src/format.test.ts`,
