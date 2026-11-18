@@ -13,15 +13,15 @@ prototype was built, as input for an SSC adoption pass.
 
 ## Status
 
-This repository predates its SSC artifacts. There is no `.ssc/` directory yet;
-the intended entry point is `ssc-plan` in brownfield/adopt mode, using
-`SSC-HANDOFF.md` as the briefing.
+The project now uses SSC artifacts under `.ssc/`: product vision, the staged
+plan, stage files, and feature specs. The documents in this folder describe the
+prototype at commit `3077fb1` and are historical review input;
+[BEHAVIOR.md](BEHAVIOR.md) carries the current dated verification matrix.
 
 ## Ground rules for these docs
 
-- They describe the code as it exists at commit `3077fb1`.
-- Claims marked **Not run** in `BEHAVIOR.md` are genuinely unverified — do not
-  promote them to baseline without evidence.
+- They describe the prototype at commit `3077fb1` and are not a statement of
+  current behavior.
 - These documents are review input. They are not PRODUCT.md, BASELINE.md,
   stage files, or feature specs, and should not be copied into `.ssc/`.
 - If the code and a document disagree, the code wins. Fix the document.

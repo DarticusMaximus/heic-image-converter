@@ -18,7 +18,7 @@
 | Backend | Rust 2024 edition |
 | Image decode | `image` 0.25.10 (JPEG/PNG/WebP/TIFF/BMP/GIF) and `heif-rs` 26.10.3 (HEIC/HEIF) |
 | Codec payload | statically linked libheif 1.23.6 + libde265 + x265, downloaded prebuilt at build time |
-| Test count | 13 Rust unit/integration tests, 0 frontend tests |
+| Test count | 42 Rust tests (plus 1 ignored manifest updater), 37 frontend tests (Vitest, 2 files) |
 | Source size | ~4,000 lines total (543 Rust conversion, 574 App, 1,124 CSS) |
 
 ## Shape
@@ -102,6 +102,8 @@ Input expansion and list metadata.
 - Hidden files/dirs (leading `.`), `Thumbs.db`, and `desktop.ini` are skipped.
   The *root* of a dropped folder is exempt (dropping `~/.photos` works).
 - `MAX_FILES = 20_000`; exceeding it stops the scan and sets `truncated`.
+  `scan` delegates to `scan_with_limit(paths, max_files)`, so tests can prove
+  truncation without creating 20,000 files.
 - Each accepted file records its canonical path, size, dimensions, plus the
   dropped folder (`root`) and the path relative to it (`relative`). Paths are
   deduplicated by canonical path.
@@ -137,7 +139,8 @@ The pipeline and the only place files are written.
 3. Per file: decode → optional Lanczos3 resize of the longest edge → encode →
    write. Each file is wrapped in `catch_unwind`, so a decoder panic becomes a
    per-file error, not a dead app.
-4. Emit `convert-progress` after each file.
+4. Call the injected `progress` callback after each file. `lib.rs` adapts it to
+   the `convert-progress` event, so this module has no Tauri dependency.
 5. Cancellation is checked between files (an in-flight encode is not
    interrupted; the UI says "Finishing current image…").
 
@@ -159,6 +162,24 @@ Encoders:
   details. The frontend multiplies by each file's target pixel count.
 - This is a real measurement on real content; PNG estimates are still
   content-sensitive and can be off on unusual images.
+
+### `src-tauri/src/backend_integration.rs` (test-only)
+
+Declared as `#[cfg(test)] mod backend_integration;`, so it ships in no build.
+It drives the real `scan`, `scan_with_limit`, `thumbnail`, and `convert_all`
+paths with no `AppHandle`, window, network, or external CLI. Every write goes
+into a `tempfile::tempdir()`; committed fixtures are copied in, never modified.
+
+- 8 scanning tests: recursion with `root`/`relative`, hidden and system entries,
+  unsupported files inside folders, explicit skip reasons, canonical dedupe,
+  mixed-root grouping, `scan_with_limit` truncation, post-rotation dimensions.
+- 6 thumbnail tests: data URL shape, downscale-only, edge clamp, alpha onto
+  white, HEIC input, unsupported/corrupt errors.
+- 7 batch tests: mixed tree with mirrored output, source protection, collision
+  naming, per-file failure isolation, pre-set cancellation, one progress event
+  per file, and the `convert-progress` camelCase payload.
+
+Mid-batch cancellation timing is not tested here; only the pre-set flag path is.
 
 ## Frontend
 
@@ -276,7 +297,10 @@ Let `out = settings.output_dir`, `root` = dropped folder, `rel` = path under it.
 See `BUILD.md`. Summary: `npm run tauri build` produces a `.deb`, `.rpm`, and
 AppImage on Linux; `.github/workflows/release.yml` builds Linux, Windows (MSVC
 and arm64 via runner matrix), and macOS (x64 + arm64) on tag push with
-`tauri-action`. `ci.yml` typechecks/builds the frontend and runs `cargo test`.
+`tauri-action`. `ci.yml` runs three independent jobs on `ubuntu-24.04` —
+`frontend` (unit tests and production build), `rust` (`cargo fmt --check` and
+`cargo test`), and `build` (release build with `--no-bundle`) — each delegating
+to `./scripts/ci.sh <gate>`.
 
 ## Places to change things
 

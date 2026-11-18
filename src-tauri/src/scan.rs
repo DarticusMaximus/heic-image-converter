@@ -52,6 +52,12 @@ struct Candidate {
 }
 
 pub fn scan(paths: &[String]) -> ScanResult {
+    scan_with_limit(paths, MAX_FILES)
+}
+
+/// Same as [`scan`], with an injectable file cap so truncation can be tested
+/// without creating `MAX_FILES` files.
+pub(crate) fn scan_with_limit(paths: &[String], max_files: usize) -> ScanResult {
     let mut candidates: Vec<Candidate> = Vec::new();
     let mut skipped: Vec<SkippedFile> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -85,7 +91,7 @@ pub fn scan(paths: &[String]) -> ScanResult {
                 if InputKind::from_path(file_path).is_none() {
                     continue;
                 }
-                if candidates.len() >= MAX_FILES {
+                if candidates.len() >= max_files {
                     truncated = true;
                     break 'outer;
                 }
@@ -105,7 +111,7 @@ pub fn scan(paths: &[String]) -> ScanResult {
                 });
                 continue;
             }
-            if candidates.len() >= MAX_FILES {
+            if candidates.len() >= max_files {
                 truncated = true;
                 break;
             }

@@ -1,0 +1,436 @@
+{
+  "version": 1,
+  "corner_tolerance": 8,
+  "fixtures": [
+    {
+      "file": "photo.png",
+      "kind": "png",
+      "tags": ["format-matrix"],
+      "about": "Plain 8-bit RGB PNG, 40x30, quadrant colors.",
+      "bytes": 216,
+      "sha256": "91d70bc735751dcabeddc3a4a4ecb02bdcb5d20074eca1e3f48314314e303e96",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "alpha.png",
+      "kind": "png",
+      "tags": ["format-matrix","alpha"],
+      "about": "RGBA PNG, 40x30, with a transparent bottom-right quadrant; proves alpha survives PNG decode and composites onto white for JPEG output.",
+      "bytes": 202,
+      "sha256": "670d708ee76ea33a2071051788bce399ff9dbfc8fa0b5a3a46c3468345ffa44c",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgba8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[0,0,0,0]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgba8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": [[224,32,32],[32,192,32],[32,64,224],[255,255,255]] },
+      "error": null
+    },
+    {
+      "file": "gray.png",
+      "kind": "png",
+      "tags": ["format-matrix","grayscale"],
+      "about": "8-bit grayscale PNG, 40x30, four gray levels; proves grayscale decode and that PNG output stays grayscale.",
+      "bytes": 181,
+      "sha256": "b70100dcbcfe8026c58f9f9999de6f827b92928d14879fe049b7a9e92ef84f25",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "L8",
+        "corners": [[32,32,32,255],[96,96,96,255],[160,160,160,255],[224,224,224,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "L8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "deep16.png",
+      "kind": "png",
+      "tags": ["format-matrix","high-bit-depth"],
+      "about": "16-bit RGB PNG, 40x30, quadrant colors; proves 16-bit PNG decode and the 16-bit-to-8-bit PNG output normalization.",
+      "bytes": 244,
+      "sha256": "7374830f7730e72d7a4441b4cbfb4c9da2cb665f030b1b0ecd2e2837be99c28a",
+      "bit_depth": 16,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb16",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "anim.gif",
+      "kind": "gif",
+      "tags": ["format-matrix","animated-gif"],
+      "about": "Animated GIF, 40x30, three uniform frames (red, green, blue); proves only the first frame is decoded.",
+      "bytes": 213,
+      "sha256": "1a0787cf51bc442fb3e248e30c06e23d4dea9cf3c92d354bb1143aaab244d12c",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": 3,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgba8",
+        "corners": [[224,32,32,255],[224,32,32,255],[224,32,32,255],[224,32,32,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgba8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "photo.webp",
+      "kind": "webp",
+      "tags": ["format-matrix"],
+      "about": "Lossy WebP, 40x30, quadrant colors; proves the WebP decode path.",
+      "bytes": 214,
+      "sha256": "b8b718074250f0f1c71210f9430d57c3c654d06c65350f6403a8540da02ea1a2",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "photo.tiff",
+      "kind": "tiff",
+      "tags": ["format-matrix"],
+      "about": "TIFF, 40x30, quadrant colors; proves the TIFF decode path.",
+      "bytes": 338,
+      "sha256": "efbcd18a9dc9b2abed9964683597819cf0208a1c3be9aae90df939c881502093",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "photo.bmp",
+      "kind": "bmp",
+      "tags": ["format-matrix"],
+      "about": "24-bit BMP, 40x30, quadrant colors; proves the BMP decode path.",
+      "bytes": 3654,
+      "sha256": "8ae830a01670b7ee15c2ec14aa8dbd3c9ddd2e183d2096abbe27928634500d90",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "photo.heic",
+      "kind": "heic",
+      "tags": ["format-matrix"],
+      "about": "8-bit HEIC, 40x30, quadrant colors; proves the HEIC decode path and 8-bit container handling.",
+      "bytes": 560,
+      "sha256": "d587fa84c312bba09b8ae02c3201774596d5e1b3254f66c5d11039effb2fb6f1",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "deep12.heic",
+      "kind": "heic",
+      "tags": ["high-bit-depth"],
+      "about": "12-bit HEIC, 40x30, quadrant colors; proves high-bit-depth HEIC decodes to 16-bit pixels and PNG output normalizes to 8-bit.",
+      "bytes": 553,
+      "sha256": "431d40f990fc2e6b793c027b6f07e85c88e269bd3b258f18f9723b5ffc12fd63",
+      "bit_depth": 12,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb16",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "burst.heic",
+      "kind": "heic",
+      "tags": ["multi-image-heic"],
+      "about": "Two-image HEIC: primary is the 40x30 quadrant image, second image is 20x15 black. Product contract: the primary image is converted and auxiliaries are ignored.",
+      "bytes": 690,
+      "sha256": "5150fc1534d3eea4fa4b1076fc2f5f32421ddf53853e335f4e4c1ea04f6d5032",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "rotated.heic",
+      "kind": "heic",
+      "tags": ["heic-rotation"],
+      "about": "HEIC with an irot container rotation, decoded 120x160, corners B R W G; proves libheif applies the container rotation so output is upright.",
+      "bytes": 634,
+      "sha256": "9818672eeb8a83a91c72905252a4b57396c57368eca67ba2c2af814572028e54",
+      "bit_depth": 8,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": {
+        "width": 120,
+        "height": 160,
+        "color": "Rgb8",
+        "corners": [[32,64,224,255],[224,32,32,255],[240,240,240,255],[32,192,32,255]]
+      },
+      "png_output": { "width": 120, "height": 160, "color": "Rgb8" },
+      "jpeg_output": { "width": 120, "height": 160, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-1.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 1 (identity), 40x30; proves orientation 1 leaves the quadrant layout untouched.",
+      "bytes": 675,
+      "sha256": "d67370a1d4dece81f1852369bbc9cf54366e2ee87e97448fb30d3437f2928fc1",
+      "bit_depth": 8,
+      "orientation": 1,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,192,32,255],[32,64,224,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-2.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 2 (mirror horizontal), 40x30, decoded corners G R W B; proves EXIF horizontal mirroring.",
+      "bytes": 675,
+      "sha256": "fcd297c8c01b8839ad6ae5e2b2bb47f185464bc14392567e696883956c13716c",
+      "bit_depth": 8,
+      "orientation": 2,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[32,192,32,255],[224,32,32,255],[240,240,240,255],[32,64,224,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-3.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 3 (rotate 180), 40x30, decoded corners W B G R; proves EXIF 180-degree rotation.",
+      "bytes": 675,
+      "sha256": "9557144478cc4eafeb39574f43f41dfbe12494211f4a2a9117041457228e82f6",
+      "bit_depth": 8,
+      "orientation": 3,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[240,240,240,255],[32,64,224,255],[32,192,32,255],[224,32,32,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-4.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 4 (mirror vertical), 40x30, decoded corners B W R G; proves EXIF vertical mirroring.",
+      "bytes": 675,
+      "sha256": "718b366de8bef8e583e0b5897c80b48998bb00ba6ae364e98b206222d8599875",
+      "bit_depth": 8,
+      "orientation": 4,
+      "animation_frames": null,
+      "decoded": {
+        "width": 40,
+        "height": 30,
+        "color": "Rgb8",
+        "corners": [[32,64,224,255],[240,240,240,255],[224,32,32,255],[32,192,32,255]]
+      },
+      "png_output": { "width": 40, "height": 30, "color": "Rgb8" },
+      "jpeg_output": { "width": 40, "height": 30, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-5.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 5 (transpose), decoded 30x40, corners R B G W; proves EXIF transpose swaps the dimensions.",
+      "bytes": 675,
+      "sha256": "99affdaafe7174f35829abd377dd9b882283a9beb40dfc30c69267afb1240c59",
+      "bit_depth": 8,
+      "orientation": 5,
+      "animation_frames": null,
+      "decoded": {
+        "width": 30,
+        "height": 40,
+        "color": "Rgb8",
+        "corners": [[224,32,32,255],[32,64,224,255],[32,192,32,255],[240,240,240,255]]
+      },
+      "png_output": { "width": 30, "height": 40, "color": "Rgb8" },
+      "jpeg_output": { "width": 30, "height": 40, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-6.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 6 (rotate 90 clockwise), decoded 30x40, corners B R W G; proves EXIF rotate-90 swaps the dimensions.",
+      "bytes": 675,
+      "sha256": "7f175af932ebc52022623502ae387b50b29681ecbeea1821fe768a79786aaa56",
+      "bit_depth": 8,
+      "orientation": 6,
+      "animation_frames": null,
+      "decoded": {
+        "width": 30,
+        "height": 40,
+        "color": "Rgb8",
+        "corners": [[32,64,224,255],[224,32,32,255],[240,240,240,255],[32,192,32,255]]
+      },
+      "png_output": { "width": 30, "height": 40, "color": "Rgb8" },
+      "jpeg_output": { "width": 30, "height": 40, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-7.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 7 (transverse), decoded 30x40, corners W G B R; proves EXIF transverse swaps the dimensions.",
+      "bytes": 675,
+      "sha256": "11d5f76f1f338f10eca928e4638ac47c87406b46bde00749f637dab2710ce1de",
+      "bit_depth": 8,
+      "orientation": 7,
+      "animation_frames": null,
+      "decoded": {
+        "width": 30,
+        "height": 40,
+        "color": "Rgb8",
+        "corners": [[240,240,240,255],[32,192,32,255],[32,64,224,255],[224,32,32,255]]
+      },
+      "png_output": { "width": 30, "height": 40, "color": "Rgb8" },
+      "jpeg_output": { "width": 30, "height": 40, "corners": null },
+      "error": null
+    },
+    {
+      "file": "orientation-8.jpg",
+      "kind": "jpeg",
+      "tags": ["format-matrix","exif-orientation"],
+      "about": "JPEG with EXIF orientation 8 (rotate 270), decoded 30x40, corners G W R B; proves EXIF rotate-270 swaps the dimensions.",
+      "bytes": 675,
+      "sha256": "f875fc59c96ed5c8e4e3a568e1b265c83281eb363beddb82c9a46db42fc4fe65",
+      "bit_depth": 8,
+      "orientation": 8,
+      "animation_frames": null,
+      "decoded": {
+        "width": 30,
+        "height": 40,
+        "color": "Rgb8",
+        "corners": [[32,192,32,255],[240,240,240,255],[224,32,32,255],[32,64,224,255]]
+      },
+      "png_output": { "width": 30, "height": 40, "color": "Rgb8" },
+      "jpeg_output": { "width": 30, "height": 40, "corners": null },
+      "error": null
+    },
+    {
+      "file": "truncated.jpg",
+      "kind": "jpeg",
+      "tags": ["truncated"],
+      "about": "Truncated JPEG, the first 200 bytes of a valid 40x30 image; proves incomplete files fail to decode instead of producing partial output.",
+      "bytes": 200,
+      "sha256": "f0e600038d01acfc187ecb1faa3649c8970a93ca5b1e51d930f26b104efa841f",
+      "bit_depth": null,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": null,
+      "png_output": null,
+      "jpeg_output": null,
+      "error": "decode"
+    },
+    {
+      "file": "garbage.png",
+      "kind": "png",
+      "tags": ["corrupt"],
+      "about": "Ten bytes of ASCII text named .png; proves corrupt files fail to decode with a clear error.",
+      "bytes": 10,
+      "sha256": "91a3072fe20c0552bfa0c3c90362af3d455a5fd4b9ec5c0c3035ade2b2258d70",
+      "bit_depth": null,
+      "orientation": null,
+      "animation_frames": null,
+      "decoded": null,
+      "png_output": null,
+      "jpeg_output": null,
+      "error": "decode"
+    }
+  ]
+}

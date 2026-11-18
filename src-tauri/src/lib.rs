@@ -4,10 +4,15 @@ mod estimate;
 mod formats;
 mod scan;
 
+#[cfg(test)]
+mod backend_integration;
+#[cfg(test)]
+mod fixture_corpus;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Default)]
 struct ConversionState {
@@ -70,7 +75,9 @@ async fn convert_files(
     let worker_app = app.clone();
 
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        let outcome = convert::convert_all(&worker_app, &items, &settings, cancel);
+        let outcome = convert::convert_all(&items, &settings, cancel, |event| {
+            let _ = worker_app.emit("convert-progress", event);
+        });
         running.store(false, Ordering::SeqCst);
         outcome
     })

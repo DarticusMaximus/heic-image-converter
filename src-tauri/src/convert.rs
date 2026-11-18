@@ -12,7 +12,6 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,20 +45,20 @@ pub struct ConversionOutcome {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProgressEvent {
-    completed: usize,
-    total: usize,
-    path: String,
-    outcome: FileOutcome,
+pub struct ProgressEvent {
+    pub completed: usize,
+    pub total: usize,
+    pub path: String,
+    pub outcome: FileOutcome,
 }
 
 /// Run the whole batch. One image at a time per worker; HEIC gets fewer
 /// workers because x265 already saturates the CPU on its own.
 pub fn convert_all(
-    app: &AppHandle,
     items: &[ConvertItem],
     settings: &ConvertSettings,
     cancel: Arc<AtomicBool>,
+    progress: impl Fn(ProgressEvent) + Send + Sync,
 ) -> ConversionOutcome {
     let total = items.len();
     let completed = AtomicUsize::new(0);
@@ -115,15 +114,12 @@ pub fn convert_all(
                 };
 
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                let _ = app.emit(
-                    "convert-progress",
-                    ProgressEvent {
-                        completed: done,
-                        total,
-                        path: item.path.clone(),
-                        outcome: outcome.clone(),
-                    },
-                );
+                progress(ProgressEvent {
+                    completed: done,
+                    total,
+                    path: item.path.clone(),
+                    outcome: outcome.clone(),
+                });
                 outcome
             })
             .collect::<Vec<_>>()

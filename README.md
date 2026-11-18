@@ -32,18 +32,19 @@ accounts, no cloud, no telemetry.
   naming — it never silently clobbers an existing file.
 - **EXIF orientation is respected**, so portrait phone photos don't come out
   sideways.
-- Runs on **macOS, Windows and Linux** with the same Rust pipeline — no
-  ImageMagick, no Homebrew, no "install these 4 codecs first". CI produces
-  installers for all three; runtime verification on Windows and macOS is still
-  pending (see [docs/BEHAVIOR.md](docs/BEHAVIOR.md)).
+- **Verified on Linux** — one machine, one dated run (2026-11-18), recorded in
+  [docs/BEHAVIOR.md](docs/BEHAVIOR.md); not a general Linux guarantee. Same
+  Rust pipeline, no ImageMagick, no Homebrew, no "install these 4 codecs
+  first". Windows and macOS builds are configured but have never been run —
+  stages 05 and 06 own those platforms.
 
 ## Install
 
-Grab a build from [Releases](https://github.com/DarticusMaximus/heic-image-converter/releases)
-(`.dmg`, `.msi`/`.exe`, `.AppImage`/`.deb`).
+No release has been published yet: the release workflow is configured but has
+not been exercised end-to-end, so there are no downloadable builds.
 
-On Arch, build from source with `npm run tauri build` (see below) or wrap the
-release artifacts in a PKGBUILD.
+Build from source with `npm run tauri build` (see below); on Arch you can also
+wrap the result in a PKGBUILD.
 
 ## Build from source
 
@@ -107,10 +108,12 @@ The [docs](docs/) folder is the project's review trail:
 
 ## Privacy
 
-All processing is local. The app makes no network requests at runtime and
-ships with a Content Security Policy that only permits its own assets. It
-deliberately does **not** copy EXIF metadata (including GPS location) to the
-output.
+All processing is local. The app ships with a Content Security Policy that
+permits its own assets plus the Vite dev origins (`ws://localhost:1420` and
+`http://localhost:1420`) used for hot reload — a recorded defect owned by
+stage 04. No runtime network capture has been performed; the capture and the
+policy tightening are deferred to stage 04. It deliberately does **not** copy
+EXIF metadata (including GPS location) to the output.
 
 ## License
 

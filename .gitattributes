@@ -1,0 +1,11 @@
+# Fixture images are generated binaries: never convert line endings or merge
+# them. Only the image extensions are marked, so manifest.json, README.md, and
+# generate.sh keep normal diffs.
+src-tauri/tests/fixtures/*.png binary
+src-tauri/tests/fixtures/*.jpg binary
+src-tauri/tests/fixtures/*.gif binary
+src-tauri/tests/fixtures/*.webp binary
+src-tauri/tests/fixtures/*.tif binary
+src-tauri/tests/fixtures/*.tiff binary
+src-tauri/tests/fixtures/*.bmp binary
+src-tauri/tests/fixtures/*.heic binary
