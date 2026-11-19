@@ -9,10 +9,10 @@ together while the crate and the archive release stay separate pins. It does not
 cover the Rust and npm trees or the codec C/C++ sources, which are never built
 here: the archive arrives prebuilt.
 
-The same-version rehearsal is scheduled, not yet executed: Tasks 5–6 will
-produce `docs/verification/2026-11-19/trust-gate/runbook-rehearsal/` by
-re-deriving the vendored tree, every hash, and running every command below. It
-changes no version, so even once run a real bump stays unproven end to end (§7).
+The same-version rehearsal is complete: `docs/verification/2026-11-19/trust-gate/runbook-rehearsal/`
+records S0–S9 at the current pins on 2026-11-19 — the vendored tree re-derived and
+diffed, the four archives re-hashed, and S9's partial gate run (trust PASS). No version
+changed, so a real bump stays unproven end to end (§7); the rehearsal did not rerun `all`/`offline` (§8).
 
 ## 1. When to upgrade
 
@@ -65,11 +65,12 @@ Open the §8 row now; it closes at the last gate.
 ```bash
 gh release view <release> --repo vegidio/binaries-heif --json tagName,body,assets \
   --jq '.assets[] | [.name, .size, .digest] | @tsv'
-curl -sSfL https://crates.io/api/v1/crates/heif-rs/<version> \
-  | python3 -c 'import json,sys; v=json.load(sys.stdin)["version"]; print(v["num"], v["checksum"])'
+curl -sSfL -H 'User-Agent: image-converter-upgrade (https://github.com/DarticusMaximus/heic-image-converter)' \
+  https://crates.io/api/v1/crates/heif-rs/<version> | python3 -c 'import json,sys; v=json.load(sys.stdin)["version"]; print(v["num"], v["checksum"])'
 ```
 Read both release notes; record the tag, crate version, published digests and
-sizes, and the crate tarball's `checksum`.
+sizes, and the crate tarball's `checksum`. The crates.io API answers 403 without
+the `User-Agent` header above; the S2 download works without one, so it is optional there.
 
 ### S2 — re-vendor the crate
 ```bash
@@ -177,8 +178,7 @@ scripts/ci.sh trust      # `failed its checksum`, expected/actual, and a fix lin
 git restore src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
 ```
 
-The lock edit, requirement edit, and corrupted extracted library follow the same
-shape; all four breaks are in `docs/verification/2026-11-19/trust-gate/`.
+The other three breaks follow the same shape; all four are in `docs/verification/2026-11-19/trust-gate/`.
 
 ## 6. Rollback
 
@@ -207,11 +207,11 @@ run afterwards, ending in `trust gate: PASS`, is the proof.
 
 ## 8. Upgrade log
 
-One row per bump, appended and never rewritten; the first is the scheduled rehearsal, filled in by Tasks 5–6.
+One row per bump, appended and never rewritten; the first is the same-version rehearsal, observed 2026-11-19 and recorded under `docs/verification/2026-11-19/trust-gate/`.
 
 | date | from | to | archive release | reviewer | trust | offline | hosted run | verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-11-19 | `26.10.3` / `26.10.1` | `26.10.3` / `26.10.1` | `26.10.1` | feature-05 builder | not yet run | prior run PASS (`dfb2fe7`, 2026-11-18) | not attempted | rehearsal (no version change), not yet run |
+| 2026-11-19 | `26.10.3` / `26.10.1` | `26.10.3` / `26.10.1` | `26.10.1` | feature-05 builder | PASS (`trust-green.log`, `runbook-rehearsal/`) | prior run PASS (`dfb2fe7`, 2026-11-18); not rerun by the rehearsal | not observed | rehearsal (no version change), observed |
 
 ## 9. Ownership
 

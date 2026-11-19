@@ -42,6 +42,9 @@ it. `VENDORED.md` records the delta from the published 26.10.3 source. The crate
 requirement is exact (`"=26.10.3"`), so the wrapper cannot resolve to another
 version.
 
+The upgrade procedure — when a bump is justified, the S0–S9 steps, verification,
+and rollback — is [UPGRADE-HEIC.md](UPGRADE-HEIC.md).
+
 What gets verified:
 
 - **Before extraction** — the archive's SHA-256 against the manifest row. A
@@ -164,6 +167,7 @@ scripts/ci.sh trust      # committed codec archives, extracted libraries, and th
 scripts/ci.sh frontend   # npm test, then npm run build
 scripts/ci.sh rust       # cargo fmt --check, then cargo test --locked (in src-tauri)
 scripts/ci.sh build      # npm run tauri -- build --no-bundle -- --locked
+scripts/ci.sh offline    # clone HEAD and prove the Rust gate with no route to the network (not part of `all`)
 scripts/ci.sh all        # trust, then frontend, then rust, then build; stops at the first failure
 ```
 
@@ -173,8 +177,12 @@ exception: it clones HEAD into a temporary directory and removes the clone when
 it exits (see [Offline builds](#offline-builds)). `--help` lists the
 subcommands; a missing or unknown one exits 2.
 
-Three gates, one CI job each:
+The gate inventory, and where each one runs:
 
+- **Trust** — `scripts/ci.sh trust`: `scripts/heif-artifacts.sh verify` over the
+  four committed archives and every already-extracted `lib/libheif.a`
+  (`lib/heif.lib` on MSVC), then the `heif-rs` entry in `Cargo.lock`. It runs as
+  a step in the `rust` and `build` jobs before their gates, and first in `all`.
 - **Frontend** — `npm test`, then `npm run build`. A failing expectation fails
   the test half; a `tsc` error fails the build half.
 - **Rust** — `cargo fmt --check`, then `cargo test --locked`, both with
@@ -183,6 +191,24 @@ Three gates, one CI job each:
   binary compiles in release mode; `--no-bundle` means no `.deb`, `.rpm`, or
   AppImage is produced, which keeps the gate to the compile it is meant to
   prove.
+- **Offline** — `scripts/ci.sh offline` in its own job, on pushes to `main` and
+  manual dispatch but never on a pull request (see
+  [Cross-platform builds](#cross-platform-builds)). It is not part of `all`.
+
+What the trust gate asserts is deliberately narrow: it owns the committed
+archives' bytes, the extracted libraries' hashes, and the `heif-rs` lock entry
+(`26.10.3`, vendored path package, no source, no checksum). It does not read
+`src-tauri/Cargo.toml`, and it does not judge whether some other dependency
+moved. A requirement the lock cannot satisfy is caught by `--locked` in the Rust
+gate, which refuses to rewrite `Cargo.lock`. The gate is not a claim that "every
+dependency" is checked; the table traces each pin to the check that asserts it:
+
+| Pin | Value | Asserting check |
+|---|---|---|
+| crate requirement | `heif-rs = "=26.10.3"` | the `the_crate_pin_matches_the_vendored_copy` test in `cargo test` |
+| resolved lock entry | `26.10.3`, path package, no source/checksum | `scripts/ci.sh trust` |
+| archive release and per-archive hashes | `26.10.1`, eight entries | the `codec_artifacts` tests in `cargo test`, plus `trust` for the four committed archives' bytes |
+| extracted library hashes | `lib_sha256` per archive | `scripts/ci.sh trust` via `scripts/heif-artifacts.sh verify` |
 
 `cargo clippy` is not a gate. `cargo clippy --all-targets` currently reports 5
 pre-existing warnings in the backend (4 `collapsible_if` in `convert.rs`, 1
@@ -234,8 +260,9 @@ What that proves and what it does not:
   build pass from scratch.
 - The `rsync` copy alone does not prove the set of committed files is sufficient,
   because it copies untracked files too. The hosted run below does prove it.
-- The three-job workflow has now run on GitHub. Commit `469b77d` ("Add the stage
-  00 test baseline and verification pass") was pushed to `main` on 2026-11-18 and
+- The three-job workflow (as it stood before the trust gate) has now run on
+  GitHub. Commit `469b77d` ("Add the stage 00 test baseline and verification
+  pass") was pushed to `main` on 2026-11-18 and
   [run 44364382930](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44364382930)
   went green on all three jobs from a fresh checkout: Frontend 12 s, Release
   build 6 m 16 s, Rust 22 m 32 s (cold). Before that, the previous single-job
@@ -244,6 +271,23 @@ What that proves and what it does not:
 - The release build took 236 s cold locally and 6 m 16 s on the hosted runner.
   The Rust job's cold 22 m 32 s is about 56 % of its 40-minute timeout, so both
   timeouts stand. Watch the Rust margin if the suite grows.
+
+### The trust gate's deliberate breaks
+
+On 2026-11-19 the trust gate was broken four ways, each run recorded under
+`docs/verification/2026-11-19/trust-gate/`, then restored:
+
+| Break | Fails | Observed signature | Restored |
+|---|---|---|---|
+| one byte appended to `src-tauri/vendor/heif-bundles/bundle_linux_x64.zip` | `trust` | `heif-rs: bundle_linux_x64.zip has the wrong size` and `failed its checksum`, with expected and actual values and a `fix:` line; exit 1 | `git checkout --` the archive; the log confirms it is byte-identical to the committed blob and `git status` is empty (green from `trust-green.log`; no gate rerun) |
+| one byte appended to an extracted `target/debug/build/heif-rs-*/out/binaries-heif-bundle-26.10.1/lib/libheif.a` | `trust` | `heif-rs: <that path> failed its checksum`, the candidate expected hashes, the actual hash, and a `fix:` line; exit 1 | delete the `heif-rs-*` build directory and rebuild; the re-extracted library hashes to the manifest value and `trust` passes |
+| `Cargo.lock`'s `heif-rs` version changed to `26.10.2` | `trust` | `trust gate: heif-rs is locked to 26.10.2; expected 26.10.3`; exit 1 | `git restore -- src-tauri/Cargo.lock`; the log confirms the SHA-256 matches HEAD and `git status` is empty (green from `trust-green.log`; no gate rerun) |
+| `heif-rs = "=26.10.3"` changed to `"=26.10.2"` in `src-tauri/Cargo.toml`, run as `rust` | `rust` | `error: failed to select a version for the requirement heif-rs = "=26.10.2"`, exit 101; `26.10.2` was never published, so the resolver refuses first. The same edit against the published `26.10.1` produces the `--locked` refusal: `error: cannot update the lock file … because --locked was passed`, exit 101 | `git restore -- src-tauri/Cargo.toml`; `cargo build --locked` exits 0 |
+
+`trust-green.log` is the clean control. `tamper-archive.log` and
+`tamper-library.log` hold the first two breaks, and `pin-drift.log` holds the
+lock edit and the requirement edit under separate headings, each with its
+restore. The failure lines above are copied from those logs, not predicted.
 
 ### Regenerating the fixture corpus
 
@@ -292,9 +336,9 @@ mkdir -p "$HOME/.cache/offline-gate"
 CI_OFFLINE_DIR=$HOME/.cache/offline-gate scripts/ci.sh offline
 ```
 
-It also needs unprivileged user namespaces (`unshare -rn`) or bubblewrap, which
-it probes with `bwrap --unshare-net --dev-bind / / true`. Without either, the
-gate exits 1:
+It also needs unprivileged user namespaces (`unshare -rn`) or bubblewrap. It
+probes `unshare -rn true` first and then
+`bwrap --unshare-net --dev-bind / / true`. Without either, the gate exits 1:
 
 ```
 offline gate: no network isolation available (need unshare -rn or bwrap)
@@ -342,12 +386,28 @@ window size, CSP, targets, category, license, icons.
 Cross-compiling Tauri from Linux is not practical (WebView2, platform SDKs,
 signing). Use the GitHub Actions workflow:
 
-- `.github/workflows/ci.yml` — three independent jobs on `ubuntu-24.04` with no
-  `needs` between them, so one failure does not hide the others: `frontend`
-  (unit tests and production build), `rust` (`cargo fmt --check` and
-  `cargo test --locked`), and `build` (release build with `--no-bundle` and
-  `--locked`). Each job installs its own dependencies and delegates to
-  `./scripts/ci.sh <gate>`; timeouts are 10, 40, and 60 minutes.
+- `.github/workflows/ci.yml` — four independent jobs on `ubuntu-24.04` with no
+  `needs` between them, so one failure does not hide the others. `frontend`
+  (unit tests and production build, 10 min) and `build` (release build with
+  `--no-bundle` and `--locked`, 60 min) are as before, except that `build` runs
+  `./scripts/ci.sh trust` after the cache restore and before `npm ci`, so a
+  poisoned cache fails before the install. `rust` runs `./scripts/ci.sh trust`
+  after the cache restore, then `./scripts/ci.sh rust` (40 min). Each job holds
+  its own dependencies and delegates the work to `./scripts/ci.sh <gate>`.
+  `offline` (75 min) is new: it runs only when
+  `if: github.event_name != 'pull_request'` — pushes to `main` and manual
+  dispatch — because it pays for a cold debug build in a throwaway clone and
+  needs a relaxed user-namespace knob that must never apply to untrusted PR
+  code. It installs the toolchain with `components: rustfmt` (the clone runs
+  `scripts/ci.sh rust`, which starts with `cargo fmt --check`), lifts
+  `kernel.apparmor_restrict_unprivileged_userns` with
+  `sudo sysctl -w …=0 || true` and sets `kernel.unprivileged_userns_clone=1`
+  the same way, probes `unshare -rn true` — failing with
+  `offline job: no usable network namespace; the gate cannot certify` — then
+  runs `./scripts/ci.sh offline`. The trust gate therefore runs on every pull
+  request in two jobs; the offline property is proven off pull requests only.
+  The four-job wiring is committed, but a hosted run of it has not yet been
+  observed; the evidence README records that until it is.
 - `.github/workflows/release.yml` — triggered by a `v*` tag or manually.
   Matrix: Ubuntu 24.04, Windows latest, macOS arm64, macOS x64. Uses
   `tauri-apps/tauri-action` to create a draft release with installers.

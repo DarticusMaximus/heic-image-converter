@@ -357,12 +357,16 @@ Let `out = settings.output_dir`, `root` = dropped folder, `rel` = path under it.
 See `BUILD.md`. Summary: `npm run tauri build` produces a `.deb`, `.rpm`, and
 AppImage on Linux; `.github/workflows/release.yml` builds Linux, Windows (MSVC
 and arm64 via runner matrix), and macOS (x64 + arm64) on tag push with
-`tauri-action`. `ci.yml` runs three independent jobs on `ubuntu-24.04` —
-`frontend` (unit tests and production build), `rust` (`cargo fmt --check` and
-`cargo test`), and `build` (release build with `--no-bundle`) — each delegating
-to `./scripts/ci.sh <gate>`. `scripts/ci.sh offline` separately proves the Rust
-gate on a `git clone` of HEAD inside a network namespace with Cargo offline; the
-npm and Tauri release builds are outside that claim.
+`tauri-action`. `ci.yml` runs four independent jobs on `ubuntu-24.04` —
+`frontend` (unit tests and production build), `rust` (`./scripts/ci.sh trust`,
+then `cargo fmt --check` and `cargo test`), `build` (`./scripts/ci.sh trust`
+before `npm ci`, then the release build with `--no-bundle`), and `offline` (the
+same Rust gate from a `git clone` inside a network namespace with Cargo
+offline) — each delegating to `./scripts/ci.sh <gate>`. The `offline` job is
+guarded by `if: github.event_name != 'pull_request'`: it runs on pushes to
+`main` and manual dispatch, never on a pull request, because of its cold-build
+cost and the relaxed user-namespace sysctl it needs. The npm and Tauri release
+builds are outside the offline claim.
 
 ## Places to change things
 
