@@ -57,9 +57,14 @@ load-bearing — and changes only where the binaries come from:
 2. Otherwise the pinned manifest at `../heif-bundles/manifest.json` is read and
    the entry for `CARGO_CFG_TARGET_OS` / `_ENV` / `_ARCH` is selected.
 3. The archive bytes come from the committed zip at
-   `../heif-bundles/<archive>` when present, else from the pinned release URL.
+   `../heif-bundles/<archive>` when present, otherwise from the pinned
+   release URL for an artifact the manifest marks `committed: false`.
    The SHA-256 is verified **before** extraction, and the extracted
    `<lib>` is verified against `lib_sha256` on a cache hit.
+4. Feature 03's local-only rule: a `committed: true` archive that is missing
+   from `../heif-bundles/` fails the build with the archive name and the
+   `scripts/heif-artifacts.sh fetch <archive>` repair command — the pinned
+   release URL is never a fallback for it.
 
 A hash mismatch is a hard failure that names the archive, both hashes, and the
 command that re-fetches the archive.

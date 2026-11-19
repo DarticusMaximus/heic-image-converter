@@ -102,19 +102,27 @@ fn resolve_from_manifest() -> PathBuf {
     cache_dir
 }
 
-/// Returns the archive bytes: the committed zip next to the manifest when it is present, otherwise a download from the
-/// manifest's pinned URL. No other source is consulted.
+/// Returns the archive bytes. A `committed` artifact is local-only: its zip is read from `../heif-bundles/`, and when
+/// that file is absent the build fails naming the archive and the repair command — there is no fallback fetch. Only an
+/// artifact the manifest marks `committed: false` may be downloaded from the pinned URL, and the caller verifies either
+/// source's bytes before extraction.
 fn load_archive(manifest: &Manifest, artifact: &Artifact) -> Vec<u8> {
-    let committed = bundle_dir().join(&artifact.archive);
-    if committed.is_file() {
-        println!("cargo:rerun-if-changed={}", committed.display());
-        return fs::read(&committed)
-            .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", committed.display()));
-    }
+    let local = bundle_dir().join(&artifact.archive);
+    let source =
+        build_support::resolve_source(artifact, local.is_file()).unwrap_or_else(|e| panic!("{e}"));
 
-    let url = archive_url(manifest, artifact);
-    eprintln!("heif-rs: downloading {url}");
-    download(&url)
+    match source {
+        build_support::Source::Local => {
+            println!("cargo:rerun-if-changed={}", local.display());
+            fs::read(&local)
+                .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", local.display()))
+        }
+        build_support::Source::Fetch => {
+            let url = archive_url(manifest, artifact);
+            eprintln!("heif-rs: downloading {url}");
+            download(&url)
+        }
+    }
 }
 
 /// Hashes the extracted static library and compares it against the artifact's recorded `lib_sha256`. This is the
