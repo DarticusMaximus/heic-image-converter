@@ -510,3 +510,55 @@ fn license_texts_match_their_recorded_hashes() {
     );
     println!("license texts checked: {checked}");
 }
+
+// ---------------------------------------------------------------------------
+// S8: the decision records carry their dated correction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn decision_records_carry_the_update() {
+    let decisions = read_repo_file("docs/DECISIONS.md");
+
+    let marker = "Superseded by Update 2026-11-18";
+    let markers = decisions.matches(marker).count();
+    assert_eq!(
+        markers, 2,
+        "docs/DECISIONS.md must mark D2 and D3 with `> **{marker}.**`; found {markers} marker(s)"
+    );
+
+    let expected = [
+        "vendor/heif-rs",
+        "manifest.json",
+        "scripts/ci.sh offline",
+        "THIRD-PARTY-NOTICES.md",
+        "LGPL-3.0-or-later",
+    ];
+
+    for needle in expected {
+        assert!(
+            decisions.contains(needle),
+            "docs/DECISIONS.md must record `{needle}` in the update paragraphs"
+        );
+    }
+
+    println!("superseded decisions marked: {markers}");
+}
+
+// ---------------------------------------------------------------------------
+// S9: the review and the notice are reachable from the indexes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_review_is_linked_from_the_index() {
+    let index = read_repo_file("docs/README.md");
+    assert!(
+        index.contains("HEIC-SOURCE-REVIEW.md"),
+        "docs/README.md must link docs/HEIC-SOURCE-REVIEW.md"
+    );
+
+    let readme = read_repo_file("README.md");
+    assert!(
+        readme.contains("THIRD-PARTY-NOTICES.md"),
+        "README.md must link THIRD-PARTY-NOTICES.md"
+    );
+}

@@ -29,6 +29,8 @@ burden, or the UI grows enough to justify a component library.
 
 ## D2 — `heif-rs` with statically linked libheif/libde265/x265
 
+> **Superseded by Update 2026-11-18.**
+
 **Context.** HEIC is the whole point. The Rust ecosystem has no mature pure-Rust
 HEVC codec. Options: bind to system libheif, shell out to a CLI, bundle a
 sidecar, or use a WASM decoder in the webview.
@@ -52,9 +54,24 @@ multi-megapixel photos, memory pressure).
 **Revisit if.** We need 10/12-bit HEIC output, the crate stops being
 maintained, or we want permissive licensing (then the encoder has to go).
 
+**Update 2026-11-18.** The build-time download described above no longer
+happens. `heif-rs` 26.10.3 is vendored at `src-tauri/vendor/heif-rs` and pinned
+exactly, and the codec archives are pinned by the committed
+`src-tauri/vendor/heif-bundles/manifest.json`, which records each archive's
+length and SHA-256 and makes the build refuse a mismatch. Four archives ship in
+the repository, so an offline build uses those committed bytes through
+`scripts/ci.sh offline`; `HEIF_BINARIES_DIR` survives only as a local override
+for a custom codec build. The crate is still young — one maintainer, small
+download count, versioning by date — so the longevity risk stands. What changed
+is that the bytes are pinned and the code has been read:
+`docs/HEIC-SOURCE-REVIEW.md` is the current record of that reading and of which
+risks are accepted, watched, or owed to stage 04.
+
 ---
 
 ## D3 — GPL-3.0-or-later for the whole app
+
+> **Superseded by Update 2026-11-18.**
 
 **Context.** x265 is GPLv2-or-later. Statically linking it into a distributed
 binary makes the combined work GPL.
@@ -71,6 +88,19 @@ BSD-licensed encoder (e.g. kvazaar) with its own quality tradeoffs.
 
 **Revisit if.** Store distribution or permissive licensing becomes a
 requirement.
+
+**Update 2026-11-18.** The identifiers are now pinned precisely. libheif 1.23.6
+and libde265 1.1.3 are `LGPL-3.0-or-later` and are statically linked into the
+executable, so the application's GPL-3.0-or-later does not absorb their duty: a
+redistributor inherits the LGPL-3.0 §4 relink obligation — the effective means
+to relink the application against a modified library, not just a source URL.
+x265 is `GPL-2.0-or-later` rather than plain "GPLv2", and it is what makes the
+combined work GPL-3.0-or-later. The linked x265 and libde265 are symbol-renamed
+modified builds, so their corresponding source has to travel with any binary.
+`THIRD-PARTY-NOTICES.md` is the authoritative record of all of this, including
+the honest limit that this repository cannot satisfy the relink and
+modified-source duties on its own until the archive's build recipe or patch is
+obtained; that gap blocks a public binary release and belongs to stage 04.
 
 ---
 

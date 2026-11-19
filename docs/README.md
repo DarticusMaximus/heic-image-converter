@@ -9,6 +9,7 @@ prototype was built, as input for an SSC adoption pass.
 | [BEHAVIOR.md](BEHAVIOR.md) | What a user sees, edge cases, explicit limitations, and an honesty-first verification matrix (what was tested, what was not) |
 | [DECISIONS.md](DECISIONS.md) | Decision log with rationale, consequences, alternatives, and open questions |
 | [BUILD.md](BUILD.md) | Prerequisites, codec artifact pin, dev/test/build, the offline gate, packaging, CI, troubleshooting |
+| [HEIC-SOURCE-REVIEW.md](HEIC-SOURCE-REVIEW.md) | Source review of the vendored `heif-rs` crate and the linked codec archive: what was read, the unsafe sites, the findings, and which risks are accepted |
 | [SSC-HANDOFF.md](SSC-HANDOFF.md) | How to convert this into an SSC project: seeds for PRODUCT/BASELINE, suggested stages and features, review checklist |
 
 ## Status

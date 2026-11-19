@@ -126,6 +126,9 @@ EXIF metadata (including GPS location) to the output.
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
 
+The bundled codec stack and its license obligations are recorded in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 The strong copyleft is a direct consequence of bundling **x265** for HEIC
 encoding, which is GPL-licensed. If you need a permissively licensed build,
 remove the `Heic` output variant and the `heif-rs` encoder side.
