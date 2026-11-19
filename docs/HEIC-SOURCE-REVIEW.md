@@ -172,4 +172,182 @@ Three further `grep` hits are not call-surface uses: `src-tauri/src/heic.rs:320`
 literal in `scan_flags_an_offender`). They belong to the test that keeps the seam
 the only consumer, not to the product.
 
-<!-- sections 5-12: later tasks -->
+## 5. `unsafe` register
+
+Twenty lines under `src-tauri/vendor/heif-rs/src/` contain `unsafe` and are not
+comments: five in `decoder.rs`, twelve in `encoder.rs`, two in `ffi.rs`, one in
+`lib.rs`, and none in `error.rs`, `info.rs`, or `sys.rs` (`sys.rs:1` mentions it
+in a doc comment only). Both `unsafe {` blocks and `unsafe fn` items are rows, as
+is the one `unsafe extern "C" fn`. The list comes from:
+
+```bash
+grep -n "unsafe" src-tauri/vendor/heif-rs/src/*.rs
+```
+
+`bindgen`'s generated bindings are the other half of the FFI surface. They are
+not in this register because they are not in the reviewed tree: `sys.rs` is five
+lines and `include!`s `$OUT_DIR/bindings.rs` at build time, so every `extern`
+declaration in `bindings.rs` is generated from the bundled `heif.h` header and
+carries no hand-written invariant. Every hand-written call through them is a row
+below. The libheif contracts cited here come from the headers inside the
+committed archive (`include/libheif/*.h` in `bundle_linux_x64.zip`), which is the
+header the bindings were generated from; a guarantee the header does not state is
+called out as such rather than assumed.
+
+| ID | Site | Operation | Invariant | Evidence |
+| --- | --- | --- | --- | --- |
+| U01 | src-tauri/vendor/heif-rs/src/decoder.rs:70 | Block in `HeifDecoder::new`: allocate the context, point libheif at the owned bytes without copying, fetch the primary handle, read the header facts. | `heif_context_alloc` may return null and is checked before use. `read_from_memory_without_copy` borrows `data` and requires that buffer to outlive the context; it does, because the success path moves that same `Vec` into `_data` without touching its heap allocation and `_data` is freed after the context in `Drop`. Both failure paths free the context before returning, so no early return leaks it, and `handle` is only read after `ffi::check` accepted the call. | `heif_context.h:251-256` in the bundled archive ("you will have to keep the memory area alive as long as you use the heif_context"); `decoder.rs:71-76` null check, `:84` and `:90` context freed on both error paths, `:99-109` data moved into `_data`, `:251-262` frees. |
+| U02 | src-tauri/vendor/heif-rs/src/decoder.rs:174 | Block in `read_image`: set the thread cap, decode the primary handle to an interleaved RGB image, copy the pixels, then release the image. | `self.context` and `self.handle` are the non-null pointers built in `new` and not yet freed; `read_image` consumes `self`, so no second owner exists. `image` starts null and is read only after `ffi::check` returned Ok. The release at `:190` runs after `copy_pixels` on both its success and error paths, so the decoded image is freed exactly once. One assumption is not documented: that a failed `heif_decode_image` leaves the out-parameter untouched. If libheif wrote a non-null image and also returned an error, the `?` at `:187` would skip the release and leak it; that is a bounded leak, not unsoundness. | `decoder.rs:62-111`, `:164-192`; `heif_decoding.h:198-213` (decode, options may be NULL) and `heif_image.h:326-328` (release). |
+| U03 | src-tauri/vendor/heif-rs/src/decoder.rs:206 | `unsafe fn copy_pixels` declaration: the caller promises a valid decoded `heif_image` owned by it. | The signature moves the obligation to the caller; the only caller passes the pointer returned by a successful `heif_decode_image` and releases it after this returns, so the image is live for every dereference inside. Nothing else holds or mutates the image. | `decoder.rs:179-191`; `heif_image.h:326-328`. |
+| U04 | src-tauri/vendor/heif-rs/src/decoder.rs:214 | Block in `copy_pixels`: read the interleaved plane and its stride, then walk `height` rows of `width * channels * sample_bytes` bytes. | The plane pointer is null-checked. **The rest is not fully established.** The loop is bounded by `self.width`/`self.height`, which are the *handle* values read in `new` (`:94-95`), while the bundled header states the handle size is the signalled item size, "is not guaranteed to match the size of the image you get back from heif_decode_image", and must not be used "to allocate or bound access to a decoded pixel buffer" — a container whose signalled size exceeds the plane is read past its end. Separately, `stride: i32` is cast to `usize` with no sign or lower-bound check, so a negative stride becomes ~1.8e19 and the row arithmetic leaves the allocation. Neither case is reachable through libheif's own plane API with a well-formed file — the stride it reports is the plane's positive bytes-per-line — but the size mismatch is exactly what the header declines to guarantee, and nothing in the wrapper enforces it. | `heif_image_handle.h:56-79` (do not bound a decoded buffer from the handle size); `heif_image.h:252-260` (stride is bytes per line, no sign promise); `heif_image.h:268-282` (the `*2` variants exist because "the stride is often multiplied by the image height ... illegal memory accesses", and require stride >= bytes_per_pixel * width); `decoder.rs:209-244`. |
+| U05 | src-tauri/vendor/heif-rs/src/decoder.rs:254 | `Drop::drop` body: release the image handle, then free the context. | Both pointers are non-null-checked and each is released exactly once: the fields are private, never reassigned after construction, and `Drop` runs once. The order is legal either way because the header states the handle is ref-counted and the context may be released once a handle has been obtained. | `decoder.rs:42-57` and `:251-263`; `heif_image_handle.h:41-47` ("you can already release the heif_context, since it is internally ref-counted"); `heif_context.h:130-137`. |
+| U06 | src-tauri/vendor/heif-rs/src/encoder.rs:273 | Block in `EncoderConfig::encode`: create the interleaved RGB `heif_image` at the requested size and chroma. | `image` starts null; `ffi::check` gates every later use, so a failed create returns before the pointer is touched and a successful one has written a non-null handle. The release at `:285` runs after `encode_with_image` returns whatever its result, so the image is freed exactly once on every path through the block. | `encoder.rs:274-287`; `heif_image.h:341-358` (create returns an error and an out pointer); `heif_image.h:326-328`. |
+| U07 | src-tauri/vendor/heif-rs/src/encoder.rs:296 | `unsafe fn encode_with_image` declaration: caller guarantees a fresh image and a buffer that matches the layout. | The caller discharges it before the call: `layout_for` rejects every unsupported color type (`:255`) and the equality check at `:257-265` makes `buf` exactly `width * height * src_channels * src_sample_bytes`, so every `read_sample` offset computed in `fill_plane` is in bounds by construction. `image` is the non-null pointer `heif_image_create` just returned and is owned by `encode` for the duration. | `encoder.rs:244-288`, `:437-486`, `:214-220`. |
+| U08 | src-tauri/vendor/heif-rs/src/encoder.rs:308 | Block in `encode_with_image`: add the interleaved plane, get its pointer and stride, fill it, allocate a context, encode into it, free the context. | `heif_image_add_plane` is checked, so an error returns before any pointer is taken. The plane pointer is null-checked, and the stride handed to `fill_plane` is the one libheif reports for the plane it just allocated at exactly `width`×`height`. The context is null-checked and freed after `encode_into_context` on both paths, so it is freed exactly once. | `encoder.rs:309-348`, `:451-482`; `heif_image.h:390-406` ("The specified width can differ from the row stride ... Always use the result of heif_image_get_plane"); `heif_context.h:130-137`. |
+| U09 | src-tauri/vendor/heif-rs/src/encoder.rs:356 | `unsafe fn encode_into_context` declaration: `ctx` and `image` are live handles owned by the caller. | Called only from `:346` with the context allocated at `:339` (non-null checked) and the image created at `:274`. The function neither frees nor stores either pointer, so the caller's lifetime is the entire obligation. | `encoder.rs:339-348`, `:356-375`. |
+| U10 | src-tauri/vendor/heif-rs/src/encoder.rs:362 | Block in `encode_into_context`: acquire the HEVC encoder for the context, hand it on, release it. | `encoder` starts null and is only read after `ffi::check` accepted the acquisition. `heif_encoder_release` runs after `encode_with_encoder` returns on success and on error, so the encoder bought here is released exactly once, and `ctx` is live per the function contract. | `encoder.rs:363-374`; `heif_encoding.h:103-114`. |
+| U11 | src-tauri/vendor/heif-rs/src/encoder.rs:381 | `unsafe fn encode_with_encoder` declaration: `ctx`, `image`, and `encoder` are live handles owned by the caller. | The three pointers are the ones allocated at `:339`, `:274`, and `:363`, and those frames release them. This function frees only what it allocates itself (`options`, `handle`), so no owner is duplicated. | `encoder.rs:346-374`, `:381-433`. |
+| U12 | src-tauri/vendor/heif-rs/src/encoder.rs:388 | Block in `encode_with_encoder`: apply quality/lossless/preset/chroma, encode the image, then serialise the container through a callback writer. | Every `heif_encoder_set_*` and the `heif_context_encode_image` result is checked. `options` is freed when non-null and the out handle released when non-null *before* the encode result is propagated, so a failed encode frees both. `out` is a local that outlives the `heif_context_write` call and `userdata` is `&mut out` cast to `*mut c_void`. `heif_encoding_options_alloc` is not checked, but the bundled header documents NULL options as the expected input to `heif_context_encode_image`, so the null case is a permitted degenerate path and the guarded free keeps it leak-free. | `encoder.rs:389-431`; `heif_encoding.h:334-341`, `:344-346` ("'options' should be NULL for now"); `heif_context.h:316-340`. |
+| U13 | src-tauri/vendor/heif-rs/src/encoder.rs:474 | Block in `fill_plane`: write one output sample into the interleaved plane, one byte for 8-bit and two little-endian bytes above it. | The last byte written is at `(height-1)*stride + width*out_channels*out_sample_bytes - 1`. The loops bound `x` by `width`, `c` by `out_channels`, and `y` by `height`; `stride` is libheif's own row stride for the plane allocated at exactly that size; the pointer came from `heif_image_get_plane` and is used before the image is released at `:285`. | `encoder.rs:327-336`, `:451-485`; `heif_image.h:341-358`, `:390-406`. |
+| U14 | src-tauri/vendor/heif-rs/src/encoder.rs:493 | `unsafe fn set_string_param` declaration: `encoder` must be a live libheif encoder. | Both call sites pass the encoder acquired at `:363` and not yet released. The function allocates no libheif object and stores nothing, so it cannot outlive the handle it is given. | `encoder.rs:397-398`, `:363-373`, `:489-505`. |
+| U15 | src-tauri/vendor/heif-rs/src/encoder.rs:497 | Block in `set_string_param`: hand two `CString` pointers to `heif_encoder_set_parameter_string`. | `CString::new` guarantees NUL termination with no interior NUL, and both strings are locals of this frame, so they are alive for the call and dropped after it returns. The bundled header states no retention contract for `value`, so this is sound only if libheif copies the string before returning; the wrapper assumes that copy and cannot enforce it. | `encoder.rs:494-504`; `heif_encoding.h:212-215` (signature only, no lifetime note). |
+| U16 | src-tauri/vendor/heif-rs/src/encoder.rs:508 | `unsafe extern "C" fn write_callback` declaration: an FFI callback libheif invokes synchronously from `heif_context_write`. | `extern "C"` means an unwind cannot cross the boundary: Rust aborts instead of unwinding into C, so the callback cannot corrupt libheif's frames. The body touches only `userdata`, which is the `*mut Vec<u8>` from the single call site, and returns a zeroed `heif_error`, which the header explicitly permits for a writer. | `encoder.rs:424-429`, `:508-524`; `heif_context.h:316-340`. |
+| U17 | src-tauri/vendor/heif-rs/src/encoder.rs:516 | Block in `write_callback`: reborrow `userdata` as `&mut Vec<u8>`, copy `data[..size]` into it, return a zeroed `heif_error`. | `userdata` is `&mut out` from `:424-428` and that `Vec` is alive for the whole write. `data` and `size` describe libheif's valid buffer for the duration of the call. The null and zero-length cases are skipped, so `from_raw_parts` is only built from a non-null pointer with a non-zero length. `zeroed::<heif_error>()` is valid because the struct is two integer enums plus a nullable pointer and all-zero is `heif_error_Ok`. | `encoder.rs:419-429`, `:516-523`; `heif_context.h:316-340`; `heif_error.h:291-309`. |
+| U18 | src-tauri/vendor/heif-rs/src/ffi.rs:16 | Block in `ffi::init`: call `heif_init` with null parameters. | `Once::call_once` makes the call happen at most once per process even under concurrent callers. A null `heif_init_params*` is explicitly permitted, so the pointer argument is sound. The returned `heif_error` is discarded: no library state is dereferenced on the strength of that return, but an init failure is unobserved and would surface later as whatever each libheif call reports. | `ffi.rs:12-20`; `heif_library.h:113-131` ("You may pass nullptr to get default parameters"). |
+| U19 | src-tauri/vendor/heif-rs/src/ffi.rs:34 | Block in `ffi::check`: build a `&CStr` from `err.message` and copy it into a `String`. | The branch runs only for a non-Ok code and only after a defensive null check. The bundled header states the message is always defined and NUL-terminated, owned by libheif, and valid only until the next call on the originating object. `check` copies it into an owned `String` immediately, before the caller frees the context at `decoder.rs:84`, `decoder.rs:90`, or `encoder.rs:347`, so the borrow ends inside the function. | `ffi.rs:24-37`; `heif_error.h:299-309`. |
+| U20 | src-tauri/vendor/heif-rs/src/lib.rs:35 | Block in `libheif_version`: build a `&CStr` from `heif_get_version()` and copy it into a `String`. | The wrapper assumes the returned `const char*` points at a static, NUL-terminated string that lives for the process. The bundled header documents the return type and the value's meaning but says nothing about storage duration, so the lifetime rests on libheif's implementation — a version string baked in at build time, which the bare `1.23.6` string in the archive is consistent with — and not on a written guarantee. The pointer is dereferenced exactly once and the text copied out immediately; nothing is freed. | `lib.rs:32-39`; `heif_library.h:69-76`; the archive carries the bare version string (a `strings` run over `lib/libheif.a` in the committed zip). |
+
+Two rows carry an obligation instead of a proof. **U04** is the only site where
+the wrapper's own bounds can disagree with the buffer libheif returned, and the
+disagreement is one the bundled header warns about in as many words; it is
+recorded as an incomplete invariant, not papered over. **U15** and **U20** rest
+on behaviour libheif's header does not promise (that a parameter value is copied,
+that the version string is static); both are latent contract gaps that a future
+libheif could violate without changing its advertised API. §11 turns these into
+findings.
+
+## 6. Ownership and lifetime
+
+Every libheif object the wrapper touches is either freed on the line after its
+last use or owned by a struct with a manual `Drop`. There is no reference
+counting of the wrapper's own and no arena: the ownership is per call, which is
+what makes the seam's per-file isolation possible.
+
+| Object | Allocated by | Freed by | Lifetime window |
+| --- | --- | --- | --- |
+| `heif_context` (decode) | `decoder.rs:71` | `decoder.rs:84` and `:90` on the two error paths, `:259` in `Drop` on success | From `new` until the decoder is dropped |
+| `heif_image_handle` (decode) | libheif, written into `decoder.rs:88` | `decoder.rs:256` in `Drop` | From `new` until the decoder is dropped |
+| `heif_image` (decode) | libheif, written into `decoder.rs:179` | `decoder.rs:190`, after `copy_pixels` | Only inside `read_image` |
+| plane pointer (decode) | libheif, inside the image | with the image at `decoder.rs:190` | From the call at `:217` until `read_image` releases the image at `:190`, which is after `copy_pixels` returns |
+| `heif_image` (encode) | `encoder.rs:275` | `encoder.rs:285` | The whole of `EncoderConfig::encode` |
+| `heif_context` (encode) | `encoder.rs:339` | `encoder.rs:347` | The whole of `encode_with_image` after `:339` |
+| `heif_encoder` | libheif, written into `encoder.rs:364` | `encoder.rs:372` | The whole of `encode_into_context` after `:364` |
+| `heif_encoding_options` | `encoder.rs:401` | `encoder.rs:410-412`, only when non-null | From `:401` until the free, bracketing one `heif_context_encode_image` |
+| `heif_image_handle` (encode) | libheif, written into `encoder.rs:403` | `encoder.rs:413-415`, only when non-null | The same bracket |
+| `Vec<u8>` of encoded bytes | `encoder.rs:419` | `encoder.rs:548` (`write_all`) then normal drop | Local to `encode_with_encoder`, moved out as `Ok(out)` |
+
+**Decoder: field order and the manual `Drop`.** `HeifDecoder` holds two raw
+pointers and one owned buffer:
+
+```
+context: *mut sys::heif_context,      // decoder.rs:44
+handle:  *mut sys::heif_image_handle, // decoder.rs:46
+_data:   Vec<u8>,                     // decoder.rs:49
+```
+
+Two independent facts put the buffer's free after the context's free. First,
+`Drop::drop` (`:251-263`) runs its body *before* any field is dropped, and the
+body releases the handle and then frees the context. Second, fields are then
+dropped in declaration order, and both pointer fields drop as no-ops, so `_data`
+is destroyed last regardless. That ordering is the whole point: libheif's memory
+IO does not copy the bytes, and the header requires the buffer to stay alive "as
+long as you use the heif_context" (`heif_context.h:251-252`).
+
+The pointer stays valid across the move into the struct at `:106` because a
+`Vec` move relocates its 24-byte header, not the heap allocation, and `_data` is
+never mutated or reallocated afterwards. The doc comment at `:47-48` says "Never
+moved out"; that is the rule, and the private field plus the absence of any
+`mem::take` or `into_inner` is what enforces it.
+
+The handle does not need to outlive the context. The header states a handle is
+internally ref-counted and the context may already be released once the handle
+exists (`heif_image_handle.h:41-43`); the wrapper's handle-then-context order in
+`Drop` is the conservative choice, not a requirement. Handles obtained from a
+context are the only thing that keeps the compressed bytes reachable, which is
+why `_data` has to outlive *both*.
+
+**Decoder: the plane pointer's validity window.** `copy_pixels` asks libheif for
+the plane (`:217`), uses it for the whole row loop (`:225-244`), and returns;
+`read_image` then releases the image at `:190`. The pointer is never stored, so
+its window is exactly the body of `copy_pixels`. `read_image(self, ...)` takes
+the decoder by value, so the decoder — and with it the context and handle — is
+still alive while the plane is being read, and is dropped after `read_image`
+returns. There is no path where the image is released before the copy and none
+where the plane escapes.
+
+**Decoder: the failure paths.** `new` allocates the context, then has two
+`return Err` paths, at `:85` (container parse failed) and `:91` (no primary
+handle). Both call `heif_context_free` first; neither has a handle to release at
+that point, because the handle is only written on success. `read_image` has one
+early return at `:187` (pixel decode failed), before an image exists to release,
+on the assumption noted in U02 that libheif leaves the out-parameter untouched
+when it reports an error.
+
+**Encoder: local frees on every path.** The encoder holds no libheif object
+between calls — `HeifEncoder<W>` is a `writer` and a `config` (`:118-121`) — so
+every acquisition is a local whose release is written on the same line pair. In
+`encode`, `image` is created at `:275` and released at `:285` *after*
+`encode_with_image` returns, so both its success and error returns are covered.
+In `encode_with_image`, `ctx` is allocated at `:339`, null-checked at `:340`, and
+freed at `:347` after `encode_into_context` returns. In `encode_into_context`,
+`encoder` is acquired at `:364` and released at `:372` after
+`encode_with_encoder` returns. In `encode_with_encoder`, `options` and the out
+handle are freed or released at `:410-415` before the encode result is
+propagated with `?` at `:416`, so a failed encode still frees both. The only
+early returns above those points are the argument checks at `:251-265` (nothing
+allocated yet), the `add_plane` and null-plane returns at `:316` and `:323`
+(caller still frees the image), and the null-context return at `:341` (nothing
+else allocated). Walking every `?` in the four functions leaves no allocated
+object behind.
+
+**Encoder: the writer's `userdata`.** `out` is a local `Vec<u8>` at `:419`; the
+`heif_writer` at `:420-423` and the `userdata` argument at `:427` are both
+borrowed from it for the duration of `heif_context_write`. libheif calls
+`write_callback` synchronously inside that call, and the callback reborrows the
+same `Vec` as `&mut` (U17). Neither the writer struct nor the pointer outlives
+the call, so `out` is a plain local again by `:431`, when it is returned as the
+encoded bytes. `write_image` then copies them to the `Write` sink with
+`write_all` (`:548`) and drops the encoder and its writer.
+
+**Options.** `heif_encoding_options` is the one object whose allocation is not
+checked, and it is also the one whose null value is documented as acceptable:
+the bundled header says "`options` should be NULL for now"
+(`heif_encoding.h:344-346`), so a failed allocation degrades to the documented
+default rather than to a null dereference. The free is guarded by
+`!options.is_null()` (`:410`), which makes the null branch leak-free. The pointer
+is never stored past the `encode_image` call. On the decode side the options
+argument is `ptr::null()` (`decoder.rs:185`), also documented as allowed
+(`heif_decoding.h:206-207`).
+
+**Process-global state.** `ffi::init` is the only object with a lifetime longer
+than a call: `Once` calls `heif_init` at most once and there is no `heif_deinit`
+anywhere in the crate, so libheif's globals live until the process exits. §7
+covers the consequences; the ownership point is that nothing in the wrapper can
+free them, and nothing tries.
+
+## 10. Seeded questions
+
+`Q01`–`Q06` are answered here; the register and the lifetime map above are the
+evidence base they cite. `Q07`–`Q17` follow in later sections of this document.
+
+| ID | Question | Anchor | Answer |
+| --- | --- | --- | --- |
+| Q01 | Does `bit_depth()` collapse every depth other than 10 and 12 to `Eight` while layout selection uses `depth > 8`? What does a 9-bit file report and decode as? | `src/decoder.rs:121-127`, `135-162`, `211` | Yes. `bit_depth()` matches `12 => Twelve, 10 => Ten, _ => Eight` (`:122-126`), while `sample_bytes()` (`:136`), `color_type()` (`:156-161`), `decode_chroma()` (`:141-146`) and the up-shift (`:211`) all key on `depth > 8`. A 9-bit file therefore reports `BitDepth::Eight` — `heif::probe` (`lib.rs:101-110`) and the seam's `probe` (`heic.rs:193-197`) both record Eight — yet decodes as `Rgb16` with two-byte samples and `up_shift = 16 - 9 = 7`. So the header report is wrong and the pixels are right: the values are 9-bit scaled into 16-bit lanes. The same collapse covers 11-bit and any depth libheif reports above 8 that is not 10 or 12. |
+| Q02 | Do container-parse failures, a missing primary handle, and pixel-decode failures all surface as `HeifError::Decode`? What does that mean for the seam's two classifiers? | `src/decoder.rs:85`, `91`, `187`; `src/error.rs:8-24` | Yes: all three are `HeifError::Decode`, and `DecoderInit` (`:73`) joins them under the same `ImageError::Decoding` wrapper built by `to_image_error` (`:266-268`). The seam's split is therefore made by *call site*, not by error value: `heic.rs:100` sends every non-`IoError` from `HeifDecoder::new` to `CorruptContainer`, and `heic.rs:101` sends every non-`IoError` from `DynamicImage::from_decoder` to `Decode` (`heic.rs:66-78`). Consequences: an allocation failure in `heif_context_alloc` is reported to the user as "this file is damaged or not a HEIC image"; a pixel-decode failure that is really a missing decoder plugin is reported as a generic decode failure; and the `IoError` arm of `classify_decode_error` (`heic.rs:75`) is unreachable for this decoder, because the reader is drained in `new` and `read_image` performs no I/O. The container classifier's `IoError` arm is live — it catches a read error during `read_to_end` (`decoder.rs:64`). |
+| Q03 | Is `heif_image_handle_get_luma_bits_per_pixel(...).max(0) as u32` safe, and can `16 - depth` underflow for an out-of-range luma depth? | `src/decoder.rs:96`, `211` | The `.max(0)` is what makes the cast safe. The header returns `int` with `-1` on error (`heif_image_handle.h:92-95`), and without the clamp `-1 as u32` would be 4294967295, putting `depth > 8` and then `16 - depth` straight into underflow. Clamped, a `-1` becomes `0`, which selects the 8-bit path and reports `Eight`. `16 - depth` can still underflow for any reported depth above 16, and nothing validates an upper bound, but no reachable value does that: the HEVC profiles the linked codec stack carries signal 8, 10, or 12 bits, which are exactly the depths `bit_depth()` distinguishes. If a future libheif reported 20, the subtraction would panic in a debug build (caught by the seam's `guard`) and wrap in release, producing a nonsense shift amount; `scaled` is truncated to `u16` and written to a fixed offset, so the result is wrong pixels, not an out-of-bounds access. Safe as shipped, with a latent debug-only panic path. |
+| Q04 | Can a negative or absurd `stride` from libheif reach `stride as usize` in `copy_pixels`? | `src/decoder.rs:215-231` | Yes — the cast at `:223` has no check at all. `stride` is an `i32` filled by the deprecated `heif_image_get_plane_readonly` (`:215-217`); a negative value becomes ~1.8e19, `y * stride` then overflows `usize` (panic in debug, wrap in release), and `plane.add()` produces a wild pointer that the row copy reads from. A small *positive* stride is the quieter failure: `out_row_bytes` (`:209`) is copied per row from a source row advanced by `stride`, so a stride below `width * channels` reads the next row's bytes as padding and yields wrong pixels. Reads stay read-only and the destination is bounded by `buf`'s length (checked at `:166-171`), so the worst case is a process abort or corrupted output, not a write past the caller's buffer. libheif 1.23.6 returns the plane's positive bytes-per-line, so this is not reachable with well-formed input; the bundled header exists in the shape it does because this exact pattern is the known hazard (`heif_image.h:268-282`). |
+| Q05 | Does the owned `Vec<u8>` really outlive the libheif context, and in what order do the manual `Drop` and field drops run? | `src/decoder.rs:47-49`, `106`, `251-263` | Yes, twice over. `Drop::drop` (`:252-262`) runs its body before any field is dropped, and the body releases the handle (`:256`) and then frees the context (`:259`); after that, fields drop in declaration order — `context`, `handle`, then `_data` (`:44-49`). `_data` is therefore freed strictly after the context on every path. The buffer also keeps its address across the move at `:106`, because moving a `Vec` moves its header, not its heap block, and `_data` is never mutated afterwards; that is what lets `heif_context_read_from_memory_without_copy` keep a bare pointer to it. The handle's release before the context's free is safe even though the wrapper does not require it: the header says handles are ref-counted (`heif_image_handle.h:41-43`). |
+| Q06 | Is `heif_init` called once and never balanced by `heif_deinit`? What is leaked, and for how long? | `src/ffi.rs:12-20` | Yes. `ffi::init` calls `heif_init(NULL)` inside `Once::call_once` (`ffi.rs:13-19`), so it runs at most once per process and cannot be re-run; `heif_deinit` appears nowhere in the crate except the comment at `ffi.rs:10` that explains the choice. The bundled header says the pair is reference counted, that each `heif_init` should be matched, and that "some library memory objects will never be freed if you do not call heif_init()/heif_deinit()" (`heif_library.h:113-131`). What leaks is libheif's process-global state — the plugin registry populated by `heif_init`'s scan of the default plugin path, the codec plugin instances it holds, and library globals. It is bounded and one-time: it does not grow per file, per decoder, or per encode call, and the OS reclaims it at exit. The other consequence is that the default plugin path is scanned exactly once, at first use, which is the plugin question `Q13` takes up. |
+
+<!-- Q07-Q17: later tasks -->
+

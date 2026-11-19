@@ -128,6 +128,107 @@ fn review_covers_every_vendored_source_file() {
 }
 
 // ---------------------------------------------------------------------------
+// S2: the unsafe register covers every unsafe site in the vendored crate
+// ---------------------------------------------------------------------------
+
+/// The `## 5. `unsafe` register` section, up to the next level-two heading.
+/// Scoping matters here: §1 and §10 quote the same `src-tauri/vendor/...` paths,
+/// so searching the whole document would pass on a document with no register.
+fn unsafe_register_section(review: &str) -> &str {
+    let (_, after) = review
+        .split_once("## 5. `unsafe` register")
+        .expect("the review has a `## 5. `unsafe` register` section");
+    after
+        .split_once("\n## ")
+        .map_or(after, |(section, _)| section)
+}
+
+/// The second cell of every `U` row, trimmed. Register rows are recognised by
+/// their shape — a line beginning with `| U` — so the prose around the table
+/// cannot satisfy the check.
+fn unsafe_row_sites(section: &str) -> Vec<String> {
+    section
+        .lines()
+        .filter_map(|line| {
+            let mut cells = line.split('|');
+            cells.next()?;
+            let id = cells.next()?.trim();
+            if !(id.len() == 3
+                && id.starts_with('U')
+                && id[1..].bytes().all(|b| b.is_ascii_digit()))
+            {
+                return None;
+            }
+            Some(cells.next()?.trim().to_owned())
+        })
+        .collect()
+}
+
+/// Every `src-tauri/vendor/heif-rs/src/<file>:<line>` whose line contains
+/// `unsafe`, in register order: file by file, ascending line. Comment-only
+/// mentions (`sys.rs:1`) are excluded, matching the `grep` in the review.
+fn unsafe_sites() -> Vec<String> {
+    let vendor = repo_root().join("src-tauri/vendor/heif-rs/src");
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(&vendor)
+        .unwrap_or_else(|err| panic!("read {}: {err}", vendor.display()))
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect();
+    sources.sort();
+
+    let mut sites = Vec::new();
+    for path in sources {
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        let name = path.file_name().expect("a source file has a name");
+        for (index, line) in text.lines().enumerate() {
+            if line.contains("unsafe") && !line.trim_start().starts_with("//") {
+                sites.push(format!(
+                    "src-tauri/vendor/heif-rs/src/{}:{}",
+                    name.to_string_lossy(),
+                    index + 1
+                ));
+            }
+        }
+    }
+    sites
+}
+
+#[test]
+fn review_covers_every_unsafe_site() {
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+    let rows = unsafe_row_sites(unsafe_register_section(&review));
+    let sites = unsafe_sites();
+
+    for site in &sites {
+        assert!(
+            rows.iter().any(|row| row == site),
+            "docs/HEIC-SOURCE-REVIEW.md §5 has no U row for the unsafe site at {site}"
+        );
+    }
+    for row in &rows {
+        assert!(
+            sites.iter().any(|site| site == row),
+            "docs/HEIC-SOURCE-REVIEW.md §5 has a U row for {row}, which is not an unsafe site in the vendored tree"
+        );
+    }
+
+    assert_eq!(
+        rows.len(),
+        20,
+        "the vendored crate has 20 unsafe sites; §5 holds {} U rows",
+        rows.len()
+    );
+    assert_eq!(
+        sites.len(),
+        rows.len(),
+        "§5 should hold exactly one U row per unsafe site"
+    );
+
+    println!("unsafe sites covered: {}", sites.len());
+}
+
+// ---------------------------------------------------------------------------
 // S5: the review records the versions and archives it is pinned to
 // ---------------------------------------------------------------------------
 
