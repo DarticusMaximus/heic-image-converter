@@ -1,0 +1,182 @@
+# Hash re-check — S3 and S4 of the upgrade runbook, 2026-11-19
+
+Same-version rehearsal of `docs/UPGRADE-HEIC.md` S3 (record the hashes by hand)
+and S4 (commit the four shipping archives). **No version was changed:** the
+release is `26.10.1`, the crate is `heif-rs` `26.10.3`, and the four archives
+were downloaded and hashed, not copied into the repository.
+
+Repository state at the run: `3ade5e0b862f5f16bb584c941ee56c7e06894985`,
+clean tree. Machine: `Linux 7.2.15-1-omarchy x86_64`. Scratch directory:
+`/tmp/opencode/heic-hash-rehearsal/`. Run at `2026-11-19T17:42Z`.
+
+Sources of truth, named once so each verdict below is checkable:
+
+- **Manifest:** `src-tauri/vendor/heif-bundles/manifest.json` (release
+  `26.10.1`, crate `heif-rs` `26.10.3`), read with `python3`.
+- **Published digest:** GitHub's per-asset `digest` field on the pinned release,
+  read with `gh release view 26.10.1 --repo vegidio/binaries-heif --json assets`.
+  The release page is
+  `https://github.com/vegidio/binaries-heif/releases/tag/26.10.1`, published
+  `2026-10-24T09:53:23Z`.
+- **Committed bytes:** the four archives under
+  `src-tauri/vendor/heif-bundles/`, compared to the downloads with `cmp`.
+
+**What the release does and does not publish.** It publishes a digest for each
+archive. It publishes **no digest for the static library inside the archive**.
+So the `sha256` verdict has a published digest to compare against, and the
+`lib_sha256` verdict compares the extracted library against the manifest's
+`lib_sha256` only; the archive digest above it is the published anchor that made
+the extraction trustworthy in the first place.
+
+## Commands as executed
+
+```
+$ gh release view 26.10.1 --repo vegidio/binaries-heif --json tagName,publishedAt --jq '.tagName + " " + .publishedAt'
+26.10.1 2026-10-24T09:53:23Z
+
+$ gh release view 26.10.1 --repo vegidio/binaries-heif --json assets --jq '.assets[] | [.name,.size,.digest] | @tsv' | grep '^bundle_'
+bundle_linux_arm64.zip	4011715	sha256:bbc73ef9c5d049cac16e124df33d2117330d689bc6e3688108052418016a91cf
+bundle_linux_x64.zip	3325156	sha256:b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+bundle_mingw_arm64.zip	3137542	sha256:c510a0d09d8e68fd41fe9a32bccb3ddbd9149e8d7f2de54cb448a8f168d1fcdf
+bundle_mingw_x64.zip	4100236	sha256:90ff4a315e3fac6e4b97fc0d4a1591d2240b2c21dda5df28a321674e18a5ce29
+bundle_osx_arm64.zip	3036209	sha256:18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+bundle_osx_x64.zip	3158467	sha256:35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+bundle_windows_arm64.zip	8254309	sha256:2456725011c9b1b5666540ff12cedf33de1e39b819b7d2ef2a61ae1a2f9b7ad7
+bundle_windows_x64.zip	8910372	sha256:5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+
+$ gh release download 26.10.1 --repo vegidio/binaries-heif \
+    --pattern 'bundle_linux_x64.zip' --pattern 'bundle_osx_x64.zip' \
+    --pattern 'bundle_osx_arm64.zip' --pattern 'bundle_windows_x64.zip' --clobber
+
+$ wc -c bundle_linux_x64.zip bundle_osx_x64.zip bundle_osx_arm64.zip bundle_windows_x64.zip
+ 3325156 bundle_linux_x64.zip
+ 3158467 bundle_osx_x64.zip
+ 3036209 bundle_osx_arm64.zip
+ 8910372 bundle_windows_x64.zip
+18430204 total
+
+$ sha256sum bundle_linux_x64.zip bundle_osx_x64.zip bundle_osx_arm64.zip bundle_windows_x64.zip
+b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82  bundle_linux_x64.zip
+35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2  bundle_osx_x64.zip
+18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1  bundle_osx_arm64.zip
+5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed  bundle_windows_x64.zip
+
+$ for a in bundle_linux_x64 bundle_osx_x64 bundle_osx_arm64 bundle_windows_x64; do
+    d="extract-$a"; rm -rf "$d"; mkdir -p "$d"; unzip -q "$a.zip" -d "$d"; \
+      echo "== $a =="; find "$d/lib" -maxdepth 1 -type f -printf '%p %s bytes\n'; sha256sum "$d"/lib/*
+  done
+# per-archive `==` and `find` lines omitted; the library hashes follow
+1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3  extract-bundle_linux_x64/lib/libheif.a
+1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992  extract-bundle_osx_x64/lib/libheif.a
+f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481  extract-bundle_osx_arm64/lib/libheif.a
+0afbfa132069da692d185905bb736be00ae7e45a10a8d231fa7e0611001c500a  extract-bundle_windows_x64/lib/heif.lib
+```
+
+## `bundle_linux_x64.zip`
+
+```
+downloaded bytes        : 3325156
+manifest bytes          : 3325156
+published asset size    : 3325156
+bytes verdict           : match
+
+downloaded sha256       : b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+manifest sha256         : b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+published release digest: sha256:b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+sha256 verdict          : match (downloaded = manifest sha256 b5cbed5d...2f82 = published digest sha256:b5cbed5d...2f82)
+
+extracted library       : extract-bundle_linux_x64/lib/libheif.a (12953188 bytes)
+computed lib_sha256     : 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3
+manifest lib_sha256     : 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3
+lib_sha256 verdict      : match (computed = manifest lib_sha256 1e308363...90b3; the release publishes no digest for the library inside, so the published anchor is this archive's digest sha256:b5cbed5d...2f82, verified above)
+
+committed archive       : src-tauri/vendor/heif-bundles/bundle_linux_x64.zip; cmp reports it identical to the download
+committed verdict       : match
+```
+
+## `bundle_osx_x64.zip`
+
+```
+downloaded bytes        : 3158467
+manifest bytes          : 3158467
+published asset size    : 3158467
+bytes verdict           : match
+
+downloaded sha256       : 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+manifest sha256         : 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+published release digest: sha256:35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+sha256 verdict          : match (downloaded = manifest sha256 35e17dfc...a4e2 = published digest sha256:35e17dfc...a4e2)
+
+extracted library       : extract-bundle_osx_x64/lib/libheif.a (14025464 bytes)
+computed lib_sha256     : 1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992
+manifest lib_sha256     : 1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992
+lib_sha256 verdict      : match (computed = manifest lib_sha256 1d25b784...7992; the release publishes no digest for the library inside, so the published anchor is this archive's digest sha256:35e17dfc...a4e2, verified above)
+
+committed archive       : src-tauri/vendor/heif-bundles/bundle_osx_x64.zip; cmp reports it identical to the download
+committed verdict       : match
+```
+
+## `bundle_osx_arm64.zip`
+
+```
+downloaded bytes        : 3036209
+manifest bytes          : 3036209
+published asset size    : 3036209
+bytes verdict           : match
+
+downloaded sha256       : 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+manifest sha256         : 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+published release digest: sha256:18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+sha256 verdict          : match (downloaded = manifest sha256 18f3faa9...d1b1 = published digest sha256:18f3faa9...d1b1)
+
+extracted library       : extract-bundle_osx_arm64/lib/libheif.a (10211264 bytes)
+computed lib_sha256     : f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481
+manifest lib_sha256     : f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481
+lib_sha256 verdict      : match (computed = manifest lib_sha256 f3a403a2...9481; the release publishes no digest for the library inside, so the published anchor is this archive's digest sha256:18f3faa9...d1b1, verified above)
+
+committed archive       : src-tauri/vendor/heif-bundles/bundle_osx_arm64.zip; cmp reports it identical to the download
+committed verdict       : match
+```
+
+## `bundle_windows_x64.zip`
+
+```
+downloaded bytes        : 8910372
+manifest bytes          : 8910372
+published asset size    : 8910372
+bytes verdict           : match
+
+downloaded sha256       : 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+manifest sha256         : 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+published release digest: sha256:5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+sha256 verdict          : match (downloaded = manifest sha256 59096721...e8ed = published digest sha256:59096721...e8ed)
+
+extracted library       : extract-bundle_windows_x64/lib/heif.lib (59118046 bytes)
+computed lib_sha256     : 0afbfa132069da692d185905bb736be00ae7e45a10a8d231fa7e0611001c500a
+manifest lib_sha256     : 0afbfa132069da692d185905bb736be00ae7e45a10a8d231fa7e0611001c500a
+lib_sha256 verdict      : match (computed = manifest lib_sha256 0afbfa13...500a; the release publishes no digest for the library inside, so the published anchor is this archive's digest sha256:59096721...e8ed, verified above)
+
+committed archive       : src-tauri/vendor/heif-bundles/bundle_windows_x64.zip; cmp reports it identical to the download
+committed verdict       : match
+```
+
+## Summary
+
+Four archives downloaded, four byte counts and four `sha256` values matched both
+the manifest and the published release digest, and the four committed copies are
+byte-identical to the downloads. Four extracted libraries were hashed; each
+computed `lib_sha256` matches the manifest's `lib_sha256` for its archive, and
+no published digest exists for a library inside an archive, so that is the only
+recorded reference for those four values.
+
+S4 at this version is a no-op in the repository: the four shipping archives are
+already committed, and `cmp` shows the committed bytes equal the downloaded
+assets. Nothing was copied over them and `scripts/heif-artifacts.sh verify`
+stayed green in S9.
+
+**Scope note.** The runbook's S3 downloads all eight `bundle_*` archives; this
+task covers the four committed shipping archives named by feature 05's Task 6.
+The four uncommitted `bundle_*` archives (Linux arm64, Windows arm64, MinGW x64,
+MinGW arm64) were not downloaded here; their manifest values were checked
+against the published metadata in the S1 record and remain unverified at the
+byte level, as the notice's §5 already states.
