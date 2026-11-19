@@ -8,7 +8,7 @@ prototype was built, as input for an SSC adoption pass.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the system is put together: modules, data flow, IPC contract, output rules, threading, security posture |
 | [BEHAVIOR.md](BEHAVIOR.md) | What a user sees, edge cases, explicit limitations, and an honesty-first verification matrix (what was tested, what was not) |
 | [DECISIONS.md](DECISIONS.md) | Decision log with rationale, consequences, alternatives, and open questions |
-| [BUILD.md](BUILD.md) | Prerequisites, codec artifact pin, dev/test/build, packaging, CI, troubleshooting |
+| [BUILD.md](BUILD.md) | Prerequisites, codec artifact pin, dev/test/build, the offline gate, packaging, CI, troubleshooting |
 | [SSC-HANDOFF.md](SSC-HANDOFF.md) | How to convert this into an SSC project: seeds for PRODUCT/BASELINE, suggested stages and features, review checklist |
 
 ## Status

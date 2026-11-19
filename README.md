@@ -67,6 +67,10 @@ target. The other four are hash-pinned and fetched on demand with
 `HEIF_BINARIES_DIR=/path/to/extracted` still overrides the artifact for a local
 or custom codec build.
 
+On the Rust side, `scripts/ci.sh offline` proves the test gate builds and tests a
+`git clone` of HEAD with no route to the network; `npm ci`, Vite, and the Tauri
+release build are outside that claim ([details](docs/BUILD.md#offline-builds)).
+
 ### Windows and macOS
 
 Cross-compiling a Tauri app from Linux is not practical (WebView2, signing,

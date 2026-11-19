@@ -360,7 +360,9 @@ and arm64 via runner matrix), and macOS (x64 + arm64) on tag push with
 `tauri-action`. `ci.yml` runs three independent jobs on `ubuntu-24.04` —
 `frontend` (unit tests and production build), `rust` (`cargo fmt --check` and
 `cargo test`), and `build` (release build with `--no-bundle`) — each delegating
-to `./scripts/ci.sh <gate>`.
+to `./scripts/ci.sh <gate>`. `scripts/ci.sh offline` separately proves the Rust
+gate on a `git clone` of HEAD inside a network namespace with Cargo offline; the
+npm and Tauri release builds are outside that claim.
 
 ## Places to change things
 

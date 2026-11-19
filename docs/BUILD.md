@@ -56,11 +56,17 @@ What gets verified:
 Four archives are committed in the repository — the targets this product ships
 and CI builds: Linux x64, macOS x64, macOS arm64, and Windows x64 (about 18 MB
 total). For those, the build resolves the archive from
-`src-tauri/vendor/heif-bundles/` and never reaches for the network. The other
-four (`linux_arm64`, `windows_arm64`, and the two MinGW targets) are hash-pinned
-but not committed: the build downloads one from the pinned release on first use
-and verifies it before extracting. MSVC targets use the `windows` archive; GNU
-targets use `mingw`.
+`src-tauri/vendor/heif-bundles/` and never reaches for the network. A missing
+committed archive is a build error naming the archive, the path it belongs at,
+and the `scripts/heif-artifacts.sh fetch` command that restores it; the build
+does not fall back to a download. The other four (`linux_arm64`,
+`windows_arm64`, and the two MinGW targets) are hash-pinned but not committed:
+building for one of those targets downloads the archive from the pinned release
+on first use and verifies it before extracting. MSVC targets use the `windows`
+archive; GNU targets use `mingw`.
+
+The offline claim for the Rust half of a clean checkout is stated once, in
+[Offline builds](#offline-builds).
 
 Two subcommands re-check the pin by hand:
 
@@ -160,8 +166,10 @@ scripts/ci.sh build      # npm run tauri -- build --no-bundle -- --locked
 scripts/ci.sh all        # frontend, then rust, then build; stops at the first failure
 ```
 
-The script installs nothing and deletes nothing. On a fresh checkout run
-`npm ci` first; the script will not do it for you. `--help` lists the
+The three fast gates above install nothing and delete nothing. On a fresh
+checkout run `npm ci` first; the script will not do it for you. The `offline`
+gate is the exception: it clones HEAD into a temporary directory and removes the
+clone when it exits (see [Offline builds](#offline-builds)). `--help` lists the
 subcommands; a missing or unknown one exits 2.
 
 Three gates, one CI job each:
@@ -255,6 +263,50 @@ cargo test
 them, and `cargo test` reads the committed fixtures and manifest — no external
 tooling, no network access.
 
+## Offline builds
+
+`scripts/ci.sh offline` proves one claim: the Rust gate — `cargo fmt --check`,
+then `cargo test --locked` — compiles the library, the binary, and every test
+target from a `git clone` of HEAD with no route to the network. The clone is
+built with `CARGO_NET_OFFLINE=true` and inside a network namespace, after a
+two-sided positive control: a probe to `1.1.1.1:443` must reach the network
+outside the sandbox and must fail inside it.
+
+One online step comes first. `cargo fetch --locked` (or any prior build) fills
+`$CARGO_HOME`; a bare clone with an empty cargo cache cannot build offline.
+
+```bash
+(cd src-tauri && cargo fetch --locked)
+scripts/ci.sh offline
+```
+
+The gate needs about 8 GiB of free space because it pays for a cold Rust test
+build. It works in `${CI_OFFLINE_DIR:-${TMPDIR:-/tmp}}`: below 8 GiB free it
+refuses to start, below 12 GiB it warns, and it removes its clone on exit. Point
+`CI_OFFLINE_DIR` at a disk-backed path when the default `/tmp` is a small
+tmpfs:
+
+```bash
+CI_OFFLINE_DIR=$HOME/.cache/offline-gate scripts/ci.sh offline
+```
+
+It also needs unprivileged user namespaces (`unshare -rn`) or `bwrap
+--unshare-net`. With neither available, or with a sandbox that still reaches the
+network, the gate exits 1 and says the offline property was not proven. It never
+reports a pass it could not prove.
+
+What it does not cover: `npm ci`, Vite, and the Tauri release build still need
+the network on a fresh machine. The claim stops at the Rust gate and at targets
+whose codec archive is committed; a build for one of the four uncommitted
+archives fails inside the gate by design.
+
+The gate proves a commit, not a working tree. The clone carries committed files
+only, so a dirty tree prints a warning naming the HEAD SHA the run actually
+certified.
+
+`offline` is not part of `all`: it needs warm cargo caches and a cold build, and
+the developer gate stays fast.
+
 ## Build installers
 
 ```bash
@@ -322,6 +374,7 @@ warnings until it is.
 |---|---|
 | Blank window in dev, CSP errors in console | CSP is missing the dev localhost origins |
 | `heif-rs` fails with a checksum mismatch | A committed archive or an extracted library does not match `manifest.json`; run `scripts/heif-artifacts.sh verify` and follow its `fix:` line |
+| `heif-rs: committed codec artifact <archive> is missing` | A committed archive is absent from `src-tauri/vendor/heif-bundles/`. The build never fetches a committed artifact; restore it with `scripts/heif-artifacts.sh fetch <archive>`, which keeps the download only if it matches the manifest |
 | `heif-rs: no pinned codec artifact for target …` | The target is not one of the eight in the manifest; `HEIF_BINARIES_DIR` is the escape hatch |
 | `webkit2gtk-4.1` not found | Install the Tauri system dependencies |
 | HEIC encode fails with an encoder error | x265 build mismatch; the bundled binary is 8-bit only |
