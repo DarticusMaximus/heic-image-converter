@@ -1,0 +1,28 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/heic_image_converter_lib-aa20e6904e508055)
+
+running 9 tests
+superseded decisions marked: 2
+test source_review::notice_names_every_bundled_component ... ok
+test source_review::decision_records_carry_the_update ... ok
+test source_review::the_review_is_linked_from_the_index ... ok
+findings with disposition: 14
+test source_review::every_finding_has_a_disposition ... ok
+test source_review::review_records_the_pinned_provenance ... ok
+seeded questions covered: 17
+test source_review::every_seeded_question_is_answered ... ok
+vendored files covered: 17
+test source_review::review_covers_every_vendored_source_file ... ok
+unsafe sites covered: 20
+test source_review::review_covers_every_unsafe_site ... ok
+license texts checked: 3
+test source_review::license_texts_match_their_recorded_hashes ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 74 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/heic_image_converter-ca802e45a2b5f85d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

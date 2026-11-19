@@ -1,0 +1,205 @@
+Archive inventory: bundle_linux_x64.zip
+Recorded 2026-11-19 from the committed bytes. Repository root unless a command
+changes directory. No command below touches the network.
+
+Repository HEAD at run time: b26e6c3d3b4b750d169d2591a53d5e2a78e73c49
+Working tree: clean
+
+== 1. Provenance: file, SHA-256, and the manifest row ==
+
+$ ls -l src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+-rw-r--r-- 1 darticus darticus 3325156 Nov 18 21:37 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+
+$ sha256sum src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82  src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+
+$ grep -A5 '"archive": "bundle_linux_x64.zip"' src-tauri/vendor/heif-bundles/manifest.json
+      "archive": "bundle_linux_x64.zip",
+      "os": "linux", "env": "any", "arch": "x86_64",
+      "committed": true,
+      "bytes": 3325156,
+      "sha256": "b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82",
+      "lib": "lib/libheif.a", "lib_sha256": "1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3"
+
+$ A=$(sha256sum src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | cut -d' ' -f1); B=$(grep -A5 '"archive": "bundle_linux_x64.zip"' src-tauri/vendor/heif-bundles/manifest.json | sed -n 's/.*"sha256": "\([0-9a-f]*\)".*/\1/p'); echo "archive:  $A"; echo "manifest: $B"; test "$A" = "$B" && echo 'SHA-256 match: yes'
+archive:  b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+manifest: b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+SHA-256 match: yes
+
+== 2. Member count and the full listing ==
+
+$ unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | wc -l
+32
+
+$ unzip -l src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+Archive:  src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  2026-10-24 09:34   include/
+        0  2026-10-24 09:34   include/libheif/
+     1419  2026-10-24 09:34   include/libheif/heif.h
+     7258  2026-10-24 09:34   include/libheif/heif_aux_images.h
+    10794  2026-10-24 09:34   include/libheif/heif_brands.h
+    19863  2026-10-24 09:34   include/libheif/heif_color.h
+     9911  2026-10-24 09:34   include/libheif/heif_components.h
+    14052  2026-10-24 09:34   include/libheif/heif_context.h
+    45061  2026-10-24 09:34   include/libheif/heif_cxx.h
+     8784  2026-10-24 09:34   include/libheif/heif_decoding.h
+    18007  2026-10-24 09:34   include/libheif/heif_encoding.h
+     6159  2026-10-24 09:34   include/libheif/heif_entity_groups.h
+     9594  2026-10-24 09:34   include/libheif/heif_error.h
+     1779  2026-10-24 09:34   include/libheif/heif_export.h
+    18706  2026-10-24 09:34   include/libheif/heif_image.h
+     8927  2026-10-24 09:34   include/libheif/heif_image_handle.h
+    13096  2026-10-24 09:34   include/libheif/heif_items.h
+     8018  2026-10-24 09:34   include/libheif/heif_library.h
+     6225  2026-10-24 09:34   include/libheif/heif_metadata.h
+     3681  2026-10-24 09:34   include/libheif/heif_omaf.h
+    13430  2026-10-24 09:34   include/libheif/heif_plugin.h
+    23958  2026-10-24 09:34   include/libheif/heif_properties.h
+    39726  2026-10-24 09:34   include/libheif/heif_regions.h
+     4181  2026-10-24 09:34   include/libheif/heif_security.h
+    26819  2026-10-24 09:34   include/libheif/heif_sequences.h
+     7798  2026-10-24 09:34   include/libheif/heif_tai_timestamps.h
+     5502  2026-10-24 09:34   include/libheif/heif_text.h
+     6397  2026-10-24 09:34   include/libheif/heif_tiling.h
+     5017  2026-10-24 09:34   include/libheif/heif_uncompressed.h
+     1189  2026-10-24 09:34   include/libheif/heif_version.h
+        0  2026-10-24 09:34   lib/
+ 12953188  2026-10-24 09:34   lib/libheif.a
+---------                     -------
+ 13298539                     32 files
+
+== 3. Member composition ==
+
+$ unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | grep -vc '/$'
+29
+
+$ unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | grep -c '^include/libheif/[^/]*\.h$'
+28
+
+== 4. License and notice members: count over the zip listing ==
+
+$ unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | grep -iE 'license|copying|notice'
+
+$ unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | grep -icE 'license|copying|notice'
+0
+
+$ echo "archive contains license/notice files: $(unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip | grep -icE 'license|copying|notice')"
+archive contains license/notice files: 0
+
+== 5. Version banners: libheif from the shipped header ==
+
+$ unzip -p src-tauri/vendor/heif-bundles/bundle_linux_x64.zip include/libheif/heif_version.h | grep -n 'LIBHEIF_VERSION'
+34:#define LIBHEIF_VERSION "1.23.6"
+
+== 6. Extract the static library, then read it ==
+
+$ rm -rf /tmp/opencode/f04-inventory && mkdir -p /tmp/opencode/f04-inventory && unzip -q src-tauri/vendor/heif-bundles/bundle_linux_x64.zip -d /tmp/opencode/f04-inventory && ls -l /tmp/opencode/f04-inventory/lib
+total 12652
+-rw-r--r-- 1 darticus darticus 12953188 Oct 24 09:34 libheif.a
+
+$ sha256sum /tmp/opencode/f04-inventory/lib/libheif.a
+1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3  /tmp/opencode/f04-inventory/lib/libheif.a
+
+$ grep -A5 '"archive": "bundle_linux_x64.zip"' src-tauri/vendor/heif-bundles/manifest.json | grep '"lib_sha256"'
+      "lib": "lib/libheif.a", "lib_sha256": "1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3"
+
+== 7. Symbol renaming ==
+
+$ nm /tmp/opencode/f04-inventory/lib/libheif.a | grep -c ' T heifrs_'
+nm: compression_brotli.cc.o: no symbols
+nm: compression_zlib.cc.o: no symbols
+2778
+
+$ nm /tmp/opencode/f04-inventory/lib/libheif.a | grep -cE ' T heif_[a-z]'
+nm: compression_brotli.cc.o: no symbols
+nm: compression_zlib.cc.o: no symbols
+465
+
+$ nm /tmp/opencode/f04-inventory/lib/libheif.a | grep -c ' T de265_'
+nm: compression_brotli.cc.o: no symbols
+nm: compression_zlib.cc.o: no symbols
+0
+
+$ nm /tmp/opencode/f04-inventory/lib/libheif.a | grep -c ' T x265_'
+nm: compression_brotli.cc.o: no symbols
+nm: compression_zlib.cc.o: no symbols
+0
+
+== 8. Banners in the linked objects ==
+
+$ cd /tmp/opencode/f04-inventory/lib && ar x libheif.a de265.cc.o version.cpp.o && strings -a de265.cc.o | grep -m1 -E '^1\.1\.3$'
+1.1.3
+
+$ cd /tmp/opencode/f04-inventory/lib && strings -a version.cpp.o | grep -E '4\.3-vcpkg|noasm'
+[Linux][GCC 13.3.0][64 bit][noasm] 8bit
+4.3-vcpkg
+
+$ strings -a /tmp/opencode/f04-inventory/lib/libheif.a | grep -E '^1\.23\.[0-9]+$' | sort -u
+1.23.6
+
+== 9. dlopen imports ==
+
+$ nm -A /tmp/opencode/f04-inventory/lib/libheif.a 2>/dev/null | grep -E ' U (dlopen|dlsym|dlclose|dlerror)$'
+/tmp/opencode/f04-inventory/lib/libheif.a:plugins_unix.cc.o:                 U dlclose
+/tmp/opencode/f04-inventory/lib/libheif.a:plugins_unix.cc.o:                 U dlerror
+/tmp/opencode/f04-inventory/lib/libheif.a:plugins_unix.cc.o:                 U dlopen
+/tmp/opencode/f04-inventory/lib/libheif.a:plugins_unix.cc.o:                 U dlsym
+/tmp/opencode/f04-inventory/lib/libheif.a:api.cpp.o:                 U dlopen
+/tmp/opencode/f04-inventory/lib/libheif.a:api.cpp.o:                 U dlsym
+
+== 10. LIBHEIF_PLUGIN_PATH string evidence ==
+
+$ strings -a /tmp/opencode/f04-inventory/lib/libheif.a | grep -c 'LIBHEIF_PLUGIN_PATH'
+1
+
+$ strings -a /tmp/opencode/f04-inventory/lib/libheif.a | grep -n 'LIBHEIF_PLUGIN_PATH'
+59919:LIBHEIF_PLUGIN_PATH
+
+$ cd /tmp/opencode/f04-inventory/lib && ar x libheif.a plugins_unix.cc.o && strings -a -t x plugins_unix.cc.o | grep 'LIBHEIF_PLUGIN_PATH'
+   1195 LIBHEIF_PLUGIN_PATH
+
+$ nm -A /tmp/opencode/f04-inventory/lib/libheif.a 2>/dev/null | grep -E ' U getenv$'
+/tmp/opencode/f04-inventory/lib/libheif.a:context.cc.o:                 U getenv
+/tmp/opencode/f04-inventory/lib/libheif.a:plugins_unix.cc.o:                 U getenv
+
+$ cd /tmp/opencode/f04-inventory/lib && nm plugins_unix.cc.o | grep -E ' U (dlopen|dlsym|dlclose|dlerror|getenv)$'
+                 U dlclose
+                 U dlerror
+                 U dlopen
+                 U dlsym
+                 U getenv
+
+$ cd /tmp/opencode/f04-inventory/lib && nm plugins_unix.cc.o | grep 'plugin_directories_from_environment'
+0000000000000700 T heifrs__Z53get_plugin_directories_from_environment_variable_unixB5cxx11v
+0000000000000031 t _Z53get_plugin_directories_from_environment_variable_unixB5cxx11v.cold
+
+$ cd /tmp/opencode/f04-inventory/lib && readelf -sW plugins_unix.cc.o | grep -E '\.LC8$'
+    17: 000000000000003c     0 NOTYPE  LOCAL  DEFAULT   16 .LC8
+
+$ cd /tmp/opencode/f04-inventory/lib && readelf -SW plugins_unix.cc.o | grep -E '\.rodata\.str1\.1'
+  [16] .rodata.str1.1    PROGBITS        0000000000000000 001159 000050 01 AMS  0   0  1
+
+$ cd /tmp/opencode/f04-inventory/lib && objdump -dr plugins_unix.cc.o 2>/dev/null | awk '/^0000000000000700 </{p=1} p{print} /R_X86_64_PLT32\tgetenv/{exit}'
+0000000000000700 <heifrs__Z53get_plugin_directories_from_environment_variable_unixB5cxx11v>:
+     700:	f3 0f 1e fa          	endbr64
+     704:	41 57                	push   %r15
+     706:	41 56                	push   %r14
+     708:	49 89 fe             	mov    %rdi,%r14
+     70b:	41 55                	push   %r13
+     70d:	41 54                	push   %r12
+     70f:	55                   	push   %rbp
+     710:	53                   	push   %rbx
+     711:	48 81 ec 38 02 00 00 	sub    $0x238,%rsp
+     718:	48 89 7c 24 28       	mov    %rdi,0x28(%rsp)
+     71d:	48 8d 3d 00 00 00 00 	lea    0x0(%rip),%rdi        # 724 <heifrs__Z53get_plugin_directories_from_environment_variable_unixB5cxx11v+0x24>
+			720: R_X86_64_PC32	.LC8-0x4
+     724:	64 48 8b 04 25 28 00 	mov    %fs:0x28,%rax
+     72b:	00 00 
+     72d:	48 89 84 24 28 02 00 	mov    %rax,0x228(%rsp)
+     734:	00 
+     735:	31 c0                	xor    %eax,%eax
+     737:	e8 00 00 00 00       	call   73c <heifrs__Z53get_plugin_directories_from_environment_variable_unixB5cxx11v+0x3c>
+			738: R_X86_64_PLT32	getenv-0x4
+
