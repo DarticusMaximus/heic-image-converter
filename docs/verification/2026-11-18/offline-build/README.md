@@ -163,7 +163,15 @@ directory, and `CARGO_TARGET_DIR` redirects the build away from
 `src-tauri/target`, so the gate's "no `src-tauri/target` in the clone" assertion
 no longer describes the directory Cargo writes to. Neither was set for the run
 recorded here; `run.log` shows the build writing to `target/debug/deps` under the
-clone.
+clone. That had to be read off the log, though, which is why the gate now
+**refuses** to run when either variable is non-empty: it exits 1 before the disk
+check or the clone, naming the variable, its value, and why a pass under it would
+not describe the committed bundle, and it also unsets both in the child command
+and prints the effective codec source and target directory before the build. This
+README's run predates that refusal — the results and `run.log` above are
+unchanged and were produced by the older gate. The refusal is proven separately,
+with a recorded run for each variable and for both, in
+`docs/verification/2026-11-19/hardening/` (Task 11 of the hardening feature).
 
 ## Which log supports which claim
 

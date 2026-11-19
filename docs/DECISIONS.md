@@ -95,8 +95,9 @@ executable, so the application's GPL-3.0-or-later does not absorb their duty: a
 redistributor inherits the LGPL-3.0 §4 relink obligation — the effective means
 to relink the application against a modified library, not just a source URL.
 x265 is `GPL-2.0-or-later` rather than plain "GPLv2", and it is what makes the
-combined work GPL-3.0-or-later. The linked x265 and libde265 are symbol-renamed
-modified builds, so their corresponding source has to travel with any binary.
+combined work GPL-3.0-or-later. The linked libheif, libde265, and x265 are
+symbol-renamed modified builds, so each one's corresponding source — the
+upstream version plus the renaming patch — has to travel with any binary.
 `THIRD-PARTY-NOTICES.md` is the authoritative record of all of this, including
 the honest limit that this repository cannot satisfy the relink and
 modified-source duties on its own until the archive's build recipe or patch is

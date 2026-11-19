@@ -192,7 +192,11 @@ scripts/ci.sh trust
 The `rm -rf` is not optional: the extracted tree is named for the codec release
 that built it, and the gate hashes every library it finds against the reverted
 manifest, so a stale extraction makes a correct revert look broken. The `trust`
-run afterwards, ending in `trust gate: PASS`, is the proof.
+run afterwards, ending in `trust gate: PASS`, is the proof. A `--target` build
+puts its extraction under `src-tauri/target/<triple>/<profile>/build/heif-rs-*`,
+and a `CARGO_TARGET_DIR` build puts it under that tree; `verify` scans both, so
+delete the extraction there too, or the same stale-cache failure follows the
+revert.
 
 ## 7. What the gate cannot catch
 

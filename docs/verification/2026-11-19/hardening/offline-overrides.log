@@ -1,0 +1,103 @@
+# Offline override refusal drill — Task 10 (X1) re-run
+# recorded:   2026-11-19T17:29:53-05:00 on omarchy
+# HEAD:       b86cb998b364a90b6d126d63d8c160c7c65e199b
+# tree diff:  sha256 d32f490076d895a75cab2fc132d461ee4b3adbe7f2fc402bce62f8ba3d3cd797 (uncommitted feature-06 diff)
+# gate:       scripts/ci.sh offline, from the working tree
+# for the refusal, no work directory is read and no clone is made: every run below
+# exits before the disk check. The PASS half is a labelled excerpt, not a re-run.
+
+## No clone exists before the drill
+$ mkdir -p '/home/darticus/.cache/offline-gate'
+[exit 0]
+
+$ ls -d '/home/darticus/.cache/offline-gate'/offline-gate.* 2>/dev/null || echo 'no offline-gate.* directory'
+no offline-gate.* directory
+[exit 0]
+
+## HEIF_BINARIES_DIR set
+$ env HEIF_BINARIES_DIR=/tmp/opencode/dummy scripts/ci.sh offline
+offline gate: HEIF_BINARIES_DIR is set to "/tmp/opencode/dummy": it bypasses the committed bundle manifest and its hashes, so a green result would not prove the committed codec bytes
+offline gate: refusing to certify with an override set; rerun with: env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR ./scripts/ci.sh offline
+offline gate: FAIL (exit 1)
+[exit 1]
+
+## CARGO_TARGET_DIR set
+$ env CARGO_TARGET_DIR=/home/darticus/.cache/offline-alt scripts/ci.sh offline
+offline gate: CARGO_TARGET_DIR is set to "/home/darticus/.cache/offline-alt": it moves the build out of the clone, so the copy this gate proves is not the one the clone builds
+offline gate: refusing to certify with an override set; rerun with: env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR ./scripts/ci.sh offline
+offline gate: FAIL (exit 1)
+[exit 1]
+
+## Both set: both are named in one pass
+$ env HEIF_BINARIES_DIR=/tmp/opencode/dummy CARGO_TARGET_DIR=/home/darticus/.cache/offline-alt scripts/ci.sh offline
+offline gate: HEIF_BINARIES_DIR is set to "/tmp/opencode/dummy": it bypasses the committed bundle manifest and its hashes, so a green result would not prove the committed codec bytes
+offline gate: CARGO_TARGET_DIR is set to "/home/darticus/.cache/offline-alt": it moves the build out of the clone, so the copy this gate proves is not the one the clone builds
+offline gate: refusing to certify with an override set; rerun with: env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR ./scripts/ci.sh offline
+offline gate: FAIL (exit 1)
+[exit 1]
+
+## Still no clone after the three refusals
+$ ls -d '/home/darticus/.cache/offline-gate'/offline-gate.* 2>/dev/null || echo 'no offline-gate.* directory'
+no offline-gate.* directory
+[exit 0]
+
+## Excerpt — NOT re-run in this session
+# Source: /tmp/opencode/task10/real-run.log, recorded by Task 10 of this feature on 2026-11-19.
+# It is the same working tree (HEAD b86cb998b364a90b6d126d63d8c160c7c65e199b plus the
+# uncommitted feature-06 diff); Task 11 has since touched only docs/. The command that
+# produced it was the real offline gate with the overrides unset, and the source file
+# itself is the authority. Key lines, copied verbatim in file order:
+$ sha256sum /tmp/opencode/task10/real-run.log
+17bdb9f208d246f822624483e2afd921e3de8f9677ee26e553576c6a498dd45d  /tmp/opencode/task10/real-run.log
+[exit 0]
+
+offline gate: working tree is dirty; this run proves HEAD b86cb99 only
+offline gate: work dir: /home/darticus/.cache/offline-gate (53 GiB free)
+offline gate: clone: /home/darticus/.cache/offline-gate/offline-gate.le9Ute/repo
+offline gate: HEAD b86cb998b364a90b6d126d63d8c160c7c65e199b
+offline gate: isolation: unshare -rn
+offline gate: codec source: /home/darticus/.cache/offline-gate/offline-gate.le9Ute/repo/src-tauri/vendor/heif-bundles/manifest.json (committed archives; HEIF_BINARIES_DIR unset)
+offline gate: target: /home/darticus/.cache/offline-gate/offline-gate.le9Ute/repo/src-tauri/target (inside the clone; CARGO_TARGET_DIR unset)
+offline gate: positive control (outside the sandbox): timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
+offline gate: positive control (inside the sandbox): unshare -rn timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443'
+offline gate: sandbox verified unreachable (positive control)
+test result: ok. 87 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.63s
+offline gate: PASS (HEAD b86cb998b364a90b6d126d63d8c160c7c65e199b, isolation: unshare -rn)
+REAL_RUN_EXIT=0
+
+# End excerpt. The three refusal runs above were executed now; this PASS was not.
+
+## Final tree state
+$ scripts/heif-artifacts.sh verify | tail -n 4
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+heif-artifacts: verified 4 committed archives, 7 extracted libraries
+[exit 0]
+
+$ git status --porcelain
+ M .github/workflows/release.yml
+ M THIRD-PARTY-NOTICES.md
+ M docs/BUILD.md
+ M docs/DECISIONS.md
+ M docs/HEIC-SOURCE-REVIEW.md
+ M docs/UPGRADE-HEIC.md
+ M docs/verification/2026-11-18/offline-build/README.md
+ M licenses/README.md
+ M scripts/ci.sh
+ M scripts/heif-artifacts.sh
+ M src-tauri/src/codec_artifacts.rs
+ M src-tauri/src/estimate.rs
+ M src-tauri/src/heic.rs
+ M src-tauri/src/source_review.rs
+ M src-tauri/src/trust_gate.rs
+ M src-tauri/vendor/heif-rs/VENDORED.md
+ M src-tauri/vendor/heif-rs/build.rs
+ M src-tauri/vendor/heif-rs/build_support.rs
+[exit 0]
+
+$ git diff | sha256sum
+d32f490076d895a75cab2fc132d461ee4b3adbe7f2fc402bce62f8ba3d3cd797  -
+[exit 0]
+
+# end of log

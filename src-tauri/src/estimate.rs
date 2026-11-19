@@ -79,14 +79,26 @@ pub fn estimate(
     let mut samples = Vec::new();
     let mut sampled_pixels: u64 = 0;
     let mut sampled_bytes: u64 = 0;
+    // The first concrete failure is carried to the terminal error. Skipping the
+    // bad sample is deliberate, but if nothing at all can be encoded the cause
+    // must be reported as what it is — an encoder that cannot start must not
+    // read as "unreadable images". One cause is enough: it describes the
+    // condition that made every sample fail.
+    let mut first_error: Option<String> = None;
 
     for index in order {
         if samples.len() >= MAX_SAMPLES {
             break;
         }
         let path = Path::new(&items[index].path);
-        let Ok((bytes, width, height)) = convert::encode_bytes(path, settings) else {
-            continue;
+        let (bytes, width, height) = match convert::encode_bytes(path, settings) {
+            Ok(sample) => sample,
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+                continue;
+            }
         };
         sampled_pixels += width as u64 * height as u64;
         sampled_bytes += bytes.len() as u64;
@@ -103,7 +115,10 @@ pub fn estimate(
     }
 
     if samples.is_empty() {
-        return Err("could not read any of the selected images".into());
+        return Err(match first_error {
+            Some(cause) => format!("could not estimate from any selected image: {cause}"),
+            None => "could not read any of the selected images".into(),
+        });
     }
 
     let bytes_per_pixel = sampled_bytes as f64 / sampled_pixels.max(1) as f64;
@@ -143,6 +158,33 @@ pub fn target_pixels(width: u32, height: u32, max_dimension: Option<u32>) -> u64
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formats::{OutputFormat, Quality};
+
+    fn settings(format: OutputFormat) -> ConvertSettings {
+        ConvertSettings {
+            format,
+            quality: Quality::Balanced,
+            max_dimension: None,
+            output_dir: None,
+            overwrite: false,
+        }
+    }
+
+    fn fixture(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn item(path: impl Into<String>) -> EstimateItem {
+        EstimateItem {
+            path: path.into(),
+            width: Some(40),
+            height: Some(30),
+        }
+    }
 
     #[test]
     fn target_pixels_respects_the_cap() {
@@ -161,5 +203,66 @@ mod tests {
             })
             .collect();
         assert_eq!(pick_samples(&items), vec![0, 4, 9]);
+    }
+
+    #[test]
+    fn an_all_failed_estimate_reports_the_underlying_cause() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut items = Vec::new();
+        for name in ["one.heic", "two.heic", "three.heic"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"0123456789").expect("write non-image bytes");
+            items.push(item(path.to_string_lossy().into_owned()));
+        }
+
+        let err =
+            estimate(&items, &settings(OutputFormat::Jpeg)).expect_err("no sample can encode");
+
+        assert!(
+            err.starts_with("could not estimate from any selected image: "),
+            "{err}"
+        );
+        // The seam's own name for the failure must survive, not a read-flavoured
+        // substitute for it.
+        assert!(err.contains("HEIC decode failed"), "{err}");
+        assert!(err.contains("damaged or not a HEIC image"), "{err}");
+        assert_ne!(err, "could not read any of the selected images");
+    }
+
+    #[test]
+    fn a_partially_failing_set_still_estimates_from_the_working_samples() {
+        let items = [
+            item(fixture("garbage.png")),
+            item(fixture("photo.png")),
+            item(fixture("alpha.png")),
+        ];
+
+        let result = estimate(&items, &settings(OutputFormat::Jpeg))
+            .expect("working samples should carry the estimate");
+
+        assert_eq!(result.sampled, 2);
+        let names: Vec<&str> = result.samples.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["photo.png", "alpha.png"]);
+        assert!(result.estimated_total_bytes > 0);
+    }
+
+    #[test]
+    fn dimension_only_items_keep_the_dimension_error() {
+        let items = vec![EstimateItem {
+            path: "/x/a.jpg".into(),
+            width: None,
+            height: None,
+        }];
+
+        let err = estimate(&items, &settings(OutputFormat::Jpeg)).expect_err("no eligible samples");
+
+        assert_eq!(err, "could not read image dimensions");
+    }
+
+    #[test]
+    fn an_empty_selection_keeps_the_nothing_to_estimate_error() {
+        let err = estimate(&[], &settings(OutputFormat::Jpeg)).expect_err("nothing selected");
+
+        assert_eq!(err, "nothing to estimate");
     }
 }

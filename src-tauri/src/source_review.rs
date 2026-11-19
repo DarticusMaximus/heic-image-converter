@@ -562,3 +562,150 @@ fn the_review_is_linked_from_the_index() {
         "README.md must link THIRD-PARTY-NOTICES.md"
     );
 }
+
+// ---------------------------------------------------------------------------
+// S10: the modified-build record names every library the archive renames
+// ---------------------------------------------------------------------------
+
+/// The libraries the archive's symbol renaming modifies. All three carry the
+/// `heifrs_` prefix on their non-API symbols; libheif keeps its public `heif_*`
+/// exports, which is why it reads as unmodified unless it is named explicitly.
+const MODIFIED_LIBRARIES: [&str; 3] = ["libheif", "libde265", "x265"];
+
+/// A level-two section's body, with the heading line dropped so a heading such
+/// as `## 4. Modified codecs` cannot satisfy a check on the prose alone.
+fn level_two_body<'a>(document: &'a str, heading: &str) -> &'a str {
+    let (_, after) = document
+        .split_once(heading)
+        .unwrap_or_else(|| panic!("the document has a `{heading}` section"));
+    let body = after.split_once('\n').map_or(after, |(_, rest)| rest);
+    body.split_once("\n## ")
+        .map_or(body, |(section, _)| section)
+}
+
+/// The sentences of a markdown section with line wraps collapsed, so a check on
+/// a phrase does not depend on where the file happens to wrap.
+fn section_sentences(section: &str) -> Vec<String> {
+    let flattened = section
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    flattened
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split(". ")
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every sentence that states a library is a symbol-renamed or modified build —
+/// the exact claim a redistributor acts on.
+fn modified_build_sentences(section: &str) -> Vec<String> {
+    section_sentences(section)
+        .into_iter()
+        .filter(|sentence| {
+            sentence.contains("modified build")
+                || sentence.contains("modified version")
+                || sentence.contains("symbol-renamed")
+        })
+        .collect()
+}
+
+fn assert_names_every_modified_library(label: &str, text: &str) {
+    for library in MODIFIED_LIBRARIES {
+        assert!(
+            text.contains(library),
+            "{label} must name `{library}` among the libraries the archive renames"
+        );
+    }
+}
+
+#[test]
+fn modified_build_record_names_every_renamed_library() {
+    let notice = read_repo_file("THIRD-PARTY-NOTICES.md");
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+
+    for (label, heading) in [
+        (
+            "THIRD-PARTY-NOTICES.md §3",
+            "## 3. If you redistribute a build",
+        ),
+        ("THIRD-PARTY-NOTICES.md §4", "## 4. Modified codecs"),
+    ] {
+        let sentences = modified_build_sentences(level_two_body(&notice, heading));
+        assert!(
+            !sentences.is_empty(),
+            "{label} must state that the linked libraries are modified builds"
+        );
+        for sentence in &sentences {
+            assert_names_every_modified_library(label, sentence);
+        }
+    }
+
+    let f02 = finding_rows(findings_section(&review))
+        .into_iter()
+        .find(|row| row.id == "F02")
+        .expect("the review's §11 has an F02 row");
+    assert_names_every_modified_library("the review's F02 row", &f02.line);
+
+    let exit = level_two_body(&review, "## 12. Exit criteria");
+    let renamed = exit
+        .lines()
+        .find(|line| line.starts_with('|') && line.contains("§12.2"))
+        .expect("the review's §12 has a §12.2 obligation row");
+    assert_names_every_modified_library("the review's §12.2 row", renamed);
+
+    let decisions = read_repo_file("docs/DECISIONS.md");
+    let sentences = modified_build_sentences(&decisions);
+    assert!(
+        !sentences.is_empty(),
+        "docs/DECISIONS.md must record the linked libraries as symbol-renamed modified builds"
+    );
+    for sentence in &sentences {
+        assert_names_every_modified_library("docs/DECISIONS.md", sentence);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S11: the redistributor checklist carries the whole of LGPL-3.0 §4
+// ---------------------------------------------------------------------------
+
+/// LGPL-3.0 §4 (`licenses/LGPL-3.0.txt`) is one opening condition plus (a)-(d),
+/// not the (d)(0) relink duty alone. (b) needs the GNU GPL text, so x265's
+/// `licenses/GPL-2.0.txt` cannot stand in for the root GPL-3.0 `LICENSE`, and
+/// (c) applies only where the work displays copyright notices during execution.
+#[test]
+fn redistributor_checklist_covers_lgpl_section_4() {
+    let notice = read_repo_file("THIRD-PARTY-NOTICES.md");
+    let section = level_two_body(&notice, "## 3. If you redistribute a build");
+    let sentences = section_sentences(section);
+
+    let sentence_with = |clause: &str, needles: &[&str]| {
+        let found = sentences
+            .iter()
+            .any(|sentence| needles.iter().all(|needle| sentence.contains(needle)));
+        assert!(
+            found,
+            "THIRD-PARTY-NOTICES.md §3 must state LGPL-3.0 {clause}; \
+             no sentence contains all of {needles:?}"
+        );
+    };
+
+    sentence_with(
+        "§4's opening condition",
+        &["do not restrict modification", "reverse engineering"],
+    );
+    sentence_with("§4(a)", &["prominent notice", "covered by"]);
+    sentence_with("§4(b), both texts", &["GNU GPL", "licenses/LGPL-3.0.txt"]);
+    sentence_with("§4(c)'s condition", &["If", "displays copyright notices"]);
+    sentence_with("§4(d)(0) as the relink duty", &["§4(d)(0)", "relink"]);
+
+    // §4(b)'s copies travel from the repository root: the root `LICENSE` is the
+    // GPL-3.0 text and is required in addition to the texts under `licenses/`.
+    sentence_with(
+        "§4(b), the root GPL-3.0 text",
+        &["LICENSE", "GPL-3.0", "in addition to"],
+    );
+}

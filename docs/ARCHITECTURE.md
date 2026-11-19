@@ -18,7 +18,7 @@
 | Backend | Rust 2024 edition |
 | Image decode | `image` 0.25.10 (JPEG/PNG/WebP/TIFF/BMP/GIF) and `heif-rs` 26.10.3 (HEIC/HEIF, exact pin, vendored and patched) |
 | Codec payload | statically linked libheif 1.23.6 + libde265 + x265, pinned by a committed manifest and checksum-verified before extraction |
-| Test count | 71 Rust tests (plus 1 ignored manifest updater), 37 frontend tests (Vitest, 2 files) |
+| Test count | Whatever `cargo test` (in `src-tauri`) and `npm test` report; this table does not restate a total that would drift |
 | Source size | ~7,900 lines total (538 Rust conversion, 547 App, 1,124 CSS) |
 
 ## Shape

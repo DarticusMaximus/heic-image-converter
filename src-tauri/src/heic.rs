@@ -56,11 +56,72 @@ impl fmt::Display for HeicError {
     }
 }
 
+// Capture of the lines `emit_panic` writes during tests. Each test runs on its
+// own thread, so this thread-local sink keeps one test's contained panic out of
+// another's view. Release builds carry none of it.
+#[cfg(test)]
+thread_local! {
+    static PANIC_LOG: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Drain the panic lines captured on the calling thread. Test-only.
+#[cfg(test)]
+fn take_panic_log() -> Vec<String> {
+    PANIC_LOG.with(|log| std::mem::take(&mut *log.borrow_mut()))
+}
+
+/// The downcast cause of a panic payload, or a placeholder when it is not a
+/// string. `panic!` with a format produces `String`; a literal produces
+/// `&'static str`; `panic_any` can produce anything.
+fn panic_cause(payload: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        message
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.as_str()
+    } else {
+        "<non-string panic payload>"
+    }
+}
+
+/// Write one line describing a contained panic. Tests capture it in the
+/// thread-local sink; everything else writes it to stderr.
+#[cfg(test)]
+fn emit_line(line: String) {
+    PANIC_LOG.with(|log| log.borrow_mut().push(line));
+}
+
+#[cfg(not(test))]
+fn emit_line(line: String) {
+    eprintln!("{line}");
+}
+
+/// Report a contained panic once: the stage, the downcast cause and the seam
+/// call site. The payload is still discarded afterwards — the seam's error
+/// value and its `Display` text are unchanged.
+fn emit_panic(stage: &str, payload: &(dyn std::any::Any + Send), at: &std::panic::Location<'_>) {
+    emit_line(format!(
+        "heic: the {stage} panicked: {} (at {at})",
+        panic_cause(payload)
+    ));
+}
+
 /// Run `f`, turning an escaped panic into a seam error so one bad file cannot
 /// take the batch down.
+///
+/// Before the payload is dropped, [`emit_panic`] reports its message and the
+/// seam call site (via `#[track_caller]`). The default panic hook still prints
+/// the harness message to stderr in tests; the emitted line is what a windowed
+/// release build can capture when a launcher keeps stderr.
+#[track_caller]
 fn guard<T>(stage: &'static str, f: impl FnOnce() -> T) -> Result<T, HeicError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-        .map_err(|_| HeicError::Panic { stage })
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            emit_panic(stage, payload.as_ref(), std::panic::Location::caller());
+            Err(HeicError::Panic { stage })
+        }
+    }
 }
 
 fn classify_container_error(err: ImageError) -> HeicError {
@@ -129,11 +190,23 @@ fn encode_inner(image: &DynamicImage, quality: u8, preset: Preset) -> Result<Vec
         ..Default::default()
     };
     let mut buf: Vec<u8> = Vec::new();
-    let encoder = heif::HeifEncoder::new_with_config(&mut buf, config);
-    // Defensive: the seam accepts any color type, the codec takes RGB8.
-    DynamicImage::ImageRgb8(image.to_rgb8())
-        .write_with_encoder(encoder)
-        .map_err(|err| classify_encode_error(&err))?;
+    match image {
+        // The common case: the caller already handed us RGB8, so write its
+        // buffer straight through the encoder. `to_rgb8()` here would clone
+        // the whole frame for nothing.
+        DynamicImage::ImageRgb8(rgb) => {
+            let encoder = heif::HeifEncoder::new_with_config(&mut buf, config);
+            rgb.write_with_encoder(encoder)
+                .map_err(|err| classify_encode_error(&err))?;
+        }
+        // Defensive: the seam still accepts any color type, the codec takes RGB8.
+        other => {
+            let encoder = heif::HeifEncoder::new_with_config(&mut buf, config);
+            DynamicImage::ImageRgb8(other.to_rgb8())
+                .write_with_encoder(encoder)
+                .map_err(|err| classify_encode_error(&err))?;
+        }
+    }
     Ok(buf)
 }
 
@@ -279,6 +352,62 @@ mod tests {
     fn an_encoder_panic_is_an_encoder_panic() {
         let result = guard("encoder", || -> () { panic!("encoder exploded") });
         assert!(matches!(result, Err(HeicError::Panic { stage: "encoder" })));
+    }
+
+    #[test]
+    fn a_contained_panic_reports_its_cause() {
+        take_panic_log();
+
+        let result = guard("decoder", || -> () { panic!("sentinel-cause") });
+
+        let err = result.expect_err("the panic must be contained");
+        assert!(matches!(&err, HeicError::Panic { stage: "decoder" }));
+        assert_eq!(
+            err.to_string(),
+            "the HEIC decoder crashed while processing this file",
+            "the seam's Display text is frozen"
+        );
+
+        let lines = take_panic_log();
+        assert_eq!(
+            lines.len(),
+            1,
+            "exactly one line per contained panic: {lines:?}"
+        );
+        let line = &lines[0];
+        assert!(line.contains("sentinel-cause"), "{line}");
+        assert!(line.contains("decoder"), "{line}");
+        assert!(
+            line.contains("heic.rs:"),
+            "the line must carry the seam call site: {line}"
+        );
+
+        // Show the captured line once when run with --nocapture.
+        println!("captured panic line: {line}");
+    }
+
+    #[test]
+    fn a_non_string_panic_payload_is_still_observable() {
+        take_panic_log();
+
+        let result = guard("encoder", || std::panic::panic_any(42u8));
+
+        let err = result.expect_err("the non-string panic must be contained");
+        assert!(matches!(&err, HeicError::Panic { stage: "encoder" }));
+        assert_eq!(
+            err.to_string(),
+            "the HEIC encoder crashed while processing this file"
+        );
+
+        let lines = take_panic_log();
+        assert_eq!(
+            lines.len(),
+            1,
+            "exactly one line per contained panic: {lines:?}"
+        );
+        let line = &lines[0];
+        assert!(line.contains("<non-string panic payload>"), "{line}");
+        assert!(line.contains("encoder"), "{line}");
     }
 
     #[test]
@@ -514,5 +643,87 @@ mod tests {
         let fast = encode(&image, 50, Preset::Fast).expect("encode preset Fast");
         let slow = encode(&image, 50, Preset::Slow).expect("encode preset Slow");
         assert_ne!(fast, slow, "preset must reach the codec");
+    }
+
+    /// `rgb` re-expressed as an opaque RGBA image: a non-RGB8 variant whose
+    /// `to_rgb8()` must reproduce the same pixels, so `encode` takes the
+    /// conversion fallback with identical input.
+    fn opaque_rgba_twin(rgb: &image::RgbImage) -> DynamicImage {
+        let rgba = image::RgbaImage::from_fn(rgb.width(), rgb.height(), |x, y| {
+            let [r, g, b] = rgb.get_pixel(x, y).0;
+            image::Rgba([r, g, b, 255])
+        });
+        DynamicImage::ImageRgba8(rgba)
+    }
+
+    /// The borrowed-buffer arm and the `to_rgb8()` fallback arm must produce
+    /// the same bytes. The first encode goes through
+    /// `DynamicImage::ImageRgb8`; the second wraps the same pixels in RGBA so
+    /// the encoder only sees them after `to_rgb8()`.
+    #[test]
+    fn rgb8_source_and_fallback_paths_emit_identical_bytes() {
+        let photo = decode(&fixture("photo.heic")).expect("decode photo.heic");
+        for (label, image) in [("photo.heic", photo), ("sample_image", sample_image())] {
+            let DynamicImage::ImageRgb8(rgb) = &image else {
+                panic!("{label}: expected an RGB8 image, got {:?}", image.color());
+            };
+            let twin = opaque_rgba_twin(rgb);
+            assert_eq!(
+                twin.to_rgb8().as_raw(),
+                rgb.as_raw(),
+                "{label}: the fallback twin must be pixel-identical"
+            );
+
+            for quality in [30, 90] {
+                for preset in [Preset::Fast, Preset::Slow] {
+                    let borrowed = encode(&image, quality, preset)
+                        .unwrap_or_else(|err| panic!("{label} q{quality} {preset:?}: {err}"));
+                    let fallback = encode(&twin, quality, preset).unwrap_or_else(|err| {
+                        panic!("{label} q{quality} {preset:?} fallback: {err}")
+                    });
+                    assert_eq!(
+                        borrowed, fallback,
+                        "{label} q{quality} {preset:?}: borrowed RGB8 buffer must encode \
+                         identically to the to_rgb8() fallback"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Encode straight from an `RgbImage`, which is what the `ImageRgb8` arm
+    /// of `encode_inner` does, and confirm the bytes round-trip.
+    #[test]
+    fn rgb_buffer_encodes_directly() {
+        let rgb = image::RgbImage::from_fn(64, 48, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * 3 + y) % 256) as u8])
+        });
+
+        // The same settings `encode_inner` builds, so the two calls differ
+        // only in how the borrowed buffer reaches the encoder.
+        let config = heif::EncoderConfig {
+            quality: 50,
+            preset: codec_preset(Preset::Fast),
+            chroma: heif::Chroma::Yuv420,
+            bit_depth: heif::BitDepth::Eight,
+            ..Default::default()
+        };
+        let mut direct = Vec::new();
+        let encoder = heif::HeifEncoder::new_with_config(&mut direct, config);
+        rgb.write_with_encoder(encoder)
+            .expect("encode straight from an RgbImage");
+
+        let seam = encode(&DynamicImage::ImageRgb8(rgb), 50, Preset::Fast)
+            .expect("encode the Rgb8 variant through the seam");
+        assert_eq!(
+            direct, seam,
+            "the Rgb8 variant must write the borrowed buffer through the seam"
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("direct.heic");
+        std::fs::write(&path, &seam).expect("write encoded heic");
+        let decoded = decode(&path).expect("decode direct encode");
+        assert_eq!((decoded.width(), decoded.height()), (64, 48));
     }
 }

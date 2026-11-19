@@ -1,0 +1,229 @@
+# Bash 3.2 portability drill — Task 4 (C2) re-run
+# recorded:   2026-11-19T17:26:32-05:00 on omarchy
+# HEAD:       b86cb998b364a90b6d126d63d8c160c7c65e199b
+# tree diff:  sha256 d32f490076d895a75cab2fc132d461ee4b3adbe7f2fc402bce62f8ba3d3cd797 (uncommitted feature-06 diff)
+# shell:      /tmp/bash32/bash-3.2.57/bash (locally built GNU bash 3.2.57, the version macOS ships as /bin/bash)
+# scripts:    the working-tree scripts/ci.sh and scripts/heif-artifacts.sh, not HEAD's
+
+## The shell actually used
+$ /tmp/bash32/bash-3.2.57/bash --version | head -n 1
+GNU bash, version 3.2.57(2)-release (x86_64-unknown-linux-gnu)
+[exit 0]
+
+$ /tmp/bash32/bash-3.2.57/bash -c 'echo BASH_VERSION=$BASH_VERSION'
+BASH_VERSION=3.2.57(2)-release
+[exit 0]
+
+$ /tmp/bash32/bash-3.2.57/bash -c 'echo "shell path: $BASH"; command -v bash'
+shell path: /tmp/bash32/bash-3.2.57/bash
+/usr/bin/bash
+[exit 0]
+
+## Syntax check under 3.2
+$ /tmp/bash32/bash-3.2.57/bash -n scripts/ci.sh
+[exit 0]
+
+$ /tmp/bash32/bash-3.2.57/bash -n scripts/heif-artifacts.sh
+[exit 0]
+
+## Cold cache: a checkout-like tree with the scripts and the committed bundle only
+$ rm -rf '/home/darticus/.cache/task11-cold'
+[exit 0]
+
+$ mkdir -p '/home/darticus/.cache/task11-cold/src-tauri/vendor/heif-bundles'
+[exit 0]
+
+$ cp -a scripts '/home/darticus/.cache/task11-cold/'
+[exit 0]
+
+$ cp -a src-tauri/vendor/heif-bundles/manifest.json src-tauri/vendor/heif-bundles/bundle_linux_x64.zip src-tauri/vendor/heif-bundles/bundle_osx_x64.zip src-tauri/vendor/heif-bundles/bundle_osx_arm64.zip src-tauri/vendor/heif-bundles/bundle_windows_x64.zip '/home/darticus/.cache/task11-cold/src-tauri/vendor/heif-bundles/'
+[exit 0]
+
+$ (cd '/home/darticus/.cache/task11-cold' && find . -maxdepth 4 -type d | sort)
+.
+./scripts
+./src-tauri
+./src-tauri/vendor
+./src-tauri/vendor/heif-bundles
+[exit 0]
+
+$ test -e '/home/darticus/.cache/task11-cold/src-tauri/target' && echo 'target exists' || echo 'no src-tauri/target: cold cache'
+no src-tauri/target: cold cache
+[exit 0]
+
+$ (cd '/home/darticus/.cache/task11-cold' && '/tmp/bash32/bash-3.2.57/bash' scripts/heif-artifacts.sh verify)
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries and include/ trees
+heif-artifacts: no extracted bundle directories found — nothing attested (cold cache)
+==> Summary
+heif-artifacts: verified 4 committed archives, 0 extracted libraries
+[exit 0]
+
+## Warm cache: the real working tree, whose target/ holds extracted bundles
+$ '/tmp/bash32/bash-3.2.57/bash' scripts/heif-artifacts.sh verify | tail -n 4
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+heif-artifacts: verified 4 committed archives, 7 extracted libraries
+[exit 0]
+
+## Tampered extracted library under 3.2
+$ cp -p 'src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a' '/tmp/opencode/task11/backups/libheif.a'
+[exit 0]
+
+$ printf 'x' >> 'src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a'
+[exit 0]
+
+$ sha256sum 'src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a'
+fdd8963c9323d7413568352cdd7054b9db18d9d2c78c367205ef0fcdb768c79b  src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a
+[exit 0]
+
+$ '/tmp/bash32/bash-3.2.57/bash' scripts/heif-artifacts.sh verify
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries and include/ trees
+scanning src-tauri/target
+checking src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+heif-rs: src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a failed its checksum
+  expected sha256 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3 (bundle_linux_x64.zip)
+  expected sha256 c7d346e31e98bfde0ffe16190b271159b884d9d3cb4761350d6be794c0158fa0 (bundle_linux_arm64.zip)
+  expected sha256 1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992 (bundle_osx_x64.zip)
+  expected sha256 f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481 (bundle_osx_arm64.zip)
+  expected sha256 b0651f1d9a1048c2a6a64be7ee52a8478496043dfbd67250cbdb7db7d221b68d (bundle_mingw_x64.zip)
+  expected sha256 232a0714f4cf3692fc65dcd1ce9b71438174fc2876a593d863206b479c7cd5ee (bundle_mingw_arm64.zip)
+  actual   sha256 fdd8963c9323d7413568352cdd7054b9db18d9d2c78c367205ef0fcdb768c79b
+  fix: scripts/heif-artifacts.sh fetch <archive>   # the pinned lib/libheif.a for this lib
+  then delete src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc to force a clean extraction
+checking src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+failed: 1 problem(s) against 4 committed archive(s) and 7 extracted librar(y/ies)
+[exit 1]
+
+## Restore
+$ cp -p '/tmp/opencode/task11/backups/libheif.a' 'src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a'
+[exit 0]
+
+$ sha256sum 'src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a'
+1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3  src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a
+[exit 0]
+
+$ '/tmp/bash32/bash-3.2.57/bash' scripts/heif-artifacts.sh verify | tail -n 4
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+heif-artifacts: verified 4 committed archives, 7 extracted libraries
+[exit 0]
+
+## scripts/ci.sh trust, run entirely under 3.2 (both scripts take their bash from PATH)
+$ PATH=/tmp/bash32/bash-3.2.57:$PATH bash -c 'echo shell=$(command -v bash); echo BASH_VERSION=$BASH_VERSION; scripts/ci.sh trust'
+shell=/tmp/bash32/bash-3.2.57/bash
+BASH_VERSION=3.2.57(2)-release
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries and include/ trees
+scanning src-tauri/target
+checking src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1 (library and include/ tree)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+checking src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc (library and include/ tree)
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include matches bundle_linux_x64.zip (28 headers)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+heif-artifacts: verified 4 committed archives, 7 extracted libraries
+trust gate: heif-rs 26.10.3 locked from vendor/heif-rs (path package)
+trust gate: PASS
+[exit 0]
+
+## Cleanup
+$ rm -rf '/home/darticus/.cache/task11-cold'
+[exit 0]
+
+$ test -e '/home/darticus/.cache/task11-cold' && echo 'still present' || echo 'cold tree removed'
+cold tree removed
+[exit 0]
+
+## Final state
+$ scripts/heif-artifacts.sh verify | tail -n 4
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/bindings.rs matches its recorded sha256
+ok src-tauri/target/x86_64-unknown-linux-gnu/debug/build/heif-rs-ee264bcf5227a904/out/bindings.rs matches its recorded sha256
+==> Summary
+heif-artifacts: verified 4 committed archives, 7 extracted libraries
+[exit 0]
+
+$ git status --porcelain
+ M .github/workflows/release.yml
+ M THIRD-PARTY-NOTICES.md
+ M docs/BUILD.md
+ M docs/DECISIONS.md
+ M docs/HEIC-SOURCE-REVIEW.md
+ M docs/UPGRADE-HEIC.md
+ M docs/verification/2026-11-18/offline-build/README.md
+ M licenses/README.md
+ M scripts/ci.sh
+ M scripts/heif-artifacts.sh
+ M src-tauri/src/codec_artifacts.rs
+ M src-tauri/src/estimate.rs
+ M src-tauri/src/heic.rs
+ M src-tauri/src/source_review.rs
+ M src-tauri/src/trust_gate.rs
+ M src-tauri/vendor/heif-rs/VENDORED.md
+ M src-tauri/vendor/heif-rs/build.rs
+ M src-tauri/vendor/heif-rs/build_support.rs
+[exit 0]
+
+$ git diff | sha256sum
+d32f490076d895a75cab2fc132d461ee4b3adbe7f2fc402bce62f8ba3d3cd797  -
+[exit 0]
+
+# end of log

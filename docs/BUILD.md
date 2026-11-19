@@ -7,6 +7,9 @@
 - **Tauri v2 system dependencies** for the host OS.
 - **C/C++ toolchain** for linking the static codec bundle (the normal Rust
   toolchain is enough on Linux and macOS; Windows needs the MSVC build tools).
+- **Bash** — `scripts/ci.sh` and `scripts/heif-artifacts.sh` run on the bash 3.2
+  that ships as macOS's `/bin/bash` as well as on newer bash; no Homebrew bash is
+  required.
 
 Linux (Arch, as used for development):
 
@@ -51,10 +54,24 @@ What gets verified:
   mismatch fails the build with the archive name, both hashes, and the
   `scripts/heif-artifacts.sh fetch` command that re-fetches it.
 - **Every time the codec build script runs** — the extracted `lib/libheif.a`
-  (`lib/heif.lib` on MSVC) is hashed against the manifest's `lib_sha256`, so a
-  stale or poisoned cache directory fails instead of being linked. Once cargo
-  caches the script's result it does not re-run; `scripts/heif-artifacts.sh
-  verify` is the on-demand re-check.
+  (`lib/heif.lib` on MSVC) against the manifest's `lib_sha256`, and every file
+  in the extracted `include/` tree against the same member of the archive it
+  came from. `heif.h` pulls in 17 sibling headers that bindgen parses
+  transitively, so all of them are codegen inputs and all of them are checked.
+  That is what keeps a writable `target/` from redefining the FFI declarations
+  while every library hash stays green: a poisoned header fails the build
+  naming the file and the cache directory to delete, and a file the archive
+  does not hold fails too. Extraction is keyed by the archive hash
+  (`binaries-heif-bundle-<release>-<sha12>`), so a cache hit can only be the
+  extraction of the archive that run verified. `bindings.rs` is then generated
+  from that verified tree and written with a `bindings.rs.sha256` sidecar (both
+  only when their bytes change); the `include/` directory and both bindings
+  files are declared to cargo as inputs, so editing or deleting either forces a
+  rerun instead of leaving a stale copy to be compiled.
+
+Cargo does not re-run a build script whose inputs are unchanged;
+`scripts/heif-artifacts.sh verify` is the on-demand re-check of the same
+archive, library, include/ tree, and bindings checks.
 
 Four archives are committed in the repository — the targets this product ships
 and CI builds: Linux x64, macOS x64, macOS arm64, and Windows x64 (about 18 MB
@@ -79,14 +96,48 @@ scripts/heif-artifacts.sh fetch bundle_linux_arm64.zip
 ```
 
 `verify` checks each committed archive's byte length and SHA-256, then every
-library already extracted under
-`src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/` against the
-manifest. Libraries are matched by hash, because the cache directory is named
-for the codec release and not the target — Linux x64 and arm64 both ship
-`lib/libheif.a`. A bundle directory that exists but holds none of the manifest's
-libraries is a half-extracted cache and fails; only the complete absence of
-bundle directories is a cold-cache pass. `verify` exits 1 on any mismatch,
-printing expected and actual values plus a `fix:` line.
+bundle it finds with a `find` over `src-tauri/target` and, when it is set,
+`$CARGO_TARGET_DIR`: every `*/build/heif-rs-*/out/binaries-heif-bundle-*/`
+directory in any layout cargo produces — `target/<profile>/build/…`, the
+`--target` layout `target/<triple>/<profile>/build/…`, and anything deeper.
+Both trees are scanned when the variable is set, so a warm default tree does not
+hide the redirected one. A relative `CARGO_TARGET_DIR` is resolved against the
+repository root, because this script runs from there while cargo resolves the
+same value from `src-tauri`; a set value that is not a readable directory makes
+`verify` exit 1 naming the variable and the path it resolved to, rather than
+scanning around it. Each root is resolved through symlinks before the walk,
+because `find` does not descend a symlinked starting point and a lexical root
+would then report a cold cache for a tree that is right there. A root path
+containing a newline or carriage return is refused by name: the script cannot
+print such a path unambiguously, so it refuses rather than attesting something a
+reader cannot see. A `find` that fails — an unreadable subtree, say — fails the
+gate naming the root and the `find` status, so a skipped subtree can never shrink
+the scan into a passing "found none". `find` output is read NUL-delimited, so a
+bundle directory whose own name contains a newline is checked like any other
+instead of being merged with a neighbour. Each bundle's library is checked
+against the manifest, every
+file in its `include/` tree against the same member of the archive that supplied
+that library, and `out/bindings.rs` against its recorded `bindings.rs.sha256`.
+Libraries are matched by hash, because the cache directory is named for the
+codec release and the archive hash, not the target — Linux x64 and arm64 both
+ship `lib/libheif.a`. A bundle directory that exists but holds none of the
+manifest's libraries is a half-extracted cache and fails; so does a `heif-rs`
+build's `out/` that holds no bundle directory at all, because that build ran and
+left codegen inputs nothing can attest (a `HEIF_BINARIES_DIR` build leaves
+exactly that shape). A bundle-named entry under `out/` that is not a directory —
+a symlink or a special file — fails too, named as what it is. Only when no
+`heif-rs` build output exists anywhere under the scanned trees is the cache
+cold: `verify` then prints
+`heif-artifacts: no extracted bundle directories found — nothing attested (cold
+cache)` and passes. A `src-tauri/target` that exists but is not a directory is a
+named failure, not a cold cache. The cold-cache line is distinct from the
+`verified 4 committed archives, N extracted libraries` summary, which reports
+the counts it actually checked and must never be read as "checked nothing, all
+good". An extracted header whose archive is not committed locally (`committed:
+false`) is reported as unattested instead of passing, and an extracted file or
+symlink the archive does not hold, a missing extracted header, or a
+`bindings.rs` without its digest sidecar all fail. `verify` exits 1 on any
+mismatch, printing expected and actual values plus a `fix:` line.
 `fetch <archive>` downloads one archive from the pinned release into
 `src-tauri/vendor/heif-bundles/` and keeps it only if its byte length and SHA-256
 match; a bad download is deleted and the script exits 1. Neither subcommand
@@ -101,6 +152,30 @@ override only at a codec build you trust.
 ```bash
 HEIF_BINARIES_DIR=/path/to/extracted cargo build --release
 ```
+
+That build extracts nothing into `target/`, so its `heif-rs` build directory holds
+an `out/` with no `binaries-heif-bundle-*` and `scripts/heif-artifacts.sh verify`
+reports it as unattestable (`has no extracted bundle directory`). Delete that
+`heif-rs-*` build directory before relying on the gate, or keep override builds
+in their own `CARGO_TARGET_DIR`.
+
+`scripts/ci.sh offline` refuses the override, and `CARGO_TARGET_DIR` with it: a
+non-empty value of either variable makes the gate exit 1 before it measures free
+space or clones, naming the variable, its value, and what a pass under it would
+fail to prove. It unsets both in the child command as well, so a variable
+exported after the check cannot reach the build, and it prints the effective
+codec source (`src-tauri/vendor/heif-bundles/manifest.json`, the committed
+archives) and target directory (`src-tauri/target` inside the clone) before the
+build starts. The remedy is:
+
+```bash
+env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR scripts/ci.sh offline
+```
+
+`trust` is unchanged by the refusal and still behaves as described above: a set
+`CARGO_TARGET_DIR` is scanned alongside the default tree, and a
+`HEIF_BINARIES_DIR` build's `out/` is reported as unattestable rather than
+passing.
 
 The Rust and build gates in `scripts/ci.sh` pass `--locked`
 (`cargo test --locked`, and `npm run tauri -- build --no-bundle -- --locked`),
@@ -174,15 +249,27 @@ scripts/ci.sh all        # trust, then frontend, then rust, then build; stops at
 The fast gates above install nothing and delete nothing. On a fresh checkout run
 `npm ci` first; the script will not do it for you. The `offline` gate is the
 exception: it clones HEAD into a temporary directory and removes the clone when
-it exits (see [Offline builds](#offline-builds)). `--help` lists the
-subcommands; a missing or unknown one exits 2.
+it exits (see [Offline builds](#offline-builds)). It also refuses to start when
+`HEIF_BINARIES_DIR` or `CARGO_TARGET_DIR` is set, because either one changes what
+a pass would describe; the remedy is one line:
+
+```bash
+env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR scripts/ci.sh offline
+```
+
+`--help` lists the subcommands; a missing or unknown one exits 2.
 
 The gate inventory, and where each one runs:
 
 - **Trust** — `scripts/ci.sh trust`: `scripts/heif-artifacts.sh verify` over the
   four committed archives and every already-extracted `lib/libheif.a`
-  (`lib/heif.lib` on MSVC), then the `heif-rs` entry in `Cargo.lock`. It runs as
+  (`lib/heif.lib` on MSVC) under the default and `CARGO_TARGET_DIR` trees, then
+  the `heif-rs` entry in `Cargo.lock`. It runs as
   a step in the `rust` and `build` jobs before their gates, and first in `all`.
+  A `CARGO_TARGET_DIR` that is set but unreadable fails `trust`, because
+  `verify` refuses rather than certifying a tree it did not scan; a
+  `CARGO_TARGET_DIR` that is unset or readable changes nothing about the four
+  committed archives the gate requires.
 - **Frontend** — `npm test`, then `npm run build`. A failing expectation fails
   the test half; a `tsc` error fails the build half.
 - **Rust** — `cargo fmt --check`, then `cargo test --locked`, both with
@@ -193,10 +280,13 @@ The gate inventory, and where each one runs:
   prove.
 - **Offline** — `scripts/ci.sh offline` in its own job, on pushes to `main` and
   manual dispatch but never on a pull request (see
-  [Cross-platform builds](#cross-platform-builds)). It is not part of `all`.
+  [Cross-platform builds](#cross-platform-builds)). It is not part of `all`, and
+  it refuses to run with `HEIF_BINARIES_DIR` or `CARGO_TARGET_DIR` set (see
+  [Offline builds](#offline-builds)).
 
 What the trust gate asserts is deliberately narrow: it owns the committed
-archives' bytes, the extracted libraries' hashes, and the `heif-rs` lock entry
+archives' bytes, the extracted libraries and `include/` trees, the bindings
+digest the build script recorded, and the `heif-rs` lock entry
 (`26.10.3`, vendored path package, no source, no checksum). It does not read
 `src-tauri/Cargo.toml`, and it does not judge whether some other dependency
 moved. A requirement the lock cannot satisfy is caught by `--locked` in the Rust
@@ -209,6 +299,8 @@ dependency" is checked; the table traces each pin to the check that asserts it:
 | resolved lock entry | `26.10.3`, path package, no source/checksum | `scripts/ci.sh trust` |
 | archive release and per-archive hashes | `26.10.1`, eight entries | the `codec_artifacts` tests in `cargo test`, plus `trust` for the four committed archives' bytes |
 | extracted library hashes | `lib_sha256` per archive | `scripts/ci.sh trust` via `scripts/heif-artifacts.sh verify` |
+| extracted include/ tree | every `include/` entry of the archive | the vendored build script on every run, plus `trust` via `scripts/heif-artifacts.sh verify` |
+| generated bindings | the digest in `bindings.rs.sha256` | the vendored build script on every run, plus `trust` via `scripts/heif-artifacts.sh verify` |
 
 `cargo clippy` is not a gate. `cargo clippy --all-targets` currently reports 5
 pre-existing warnings in the backend (4 `collapsible_if` in `convert.rs`, 1
@@ -336,6 +428,22 @@ mkdir -p "$HOME/.cache/offline-gate"
 CI_OFFLINE_DIR=$HOME/.cache/offline-gate scripts/ci.sh offline
 ```
 
+The gate refuses to certify a run whose inputs it cannot name. A non-empty
+`HEIF_BINARIES_DIR` or `CARGO_TARGET_DIR` makes it exit 1 before the disk check
+and the clone. The first bypasses the committed manifest and its hashes, so a
+pass would not prove the committed codec bytes; the second moves the build out of
+the clone, so the copy the gate proves is not the one the clone builds. It unsets
+both in the child command as well, and prints the effective source and target
+before the build, so a saved transcript says what a pass describes:
+
+```
+offline gate: codec source: <clone>/repo/src-tauri/vendor/heif-bundles/manifest.json (committed archives; HEIF_BINARIES_DIR unset)
+offline gate: target: <clone>/repo/src-tauri/target (inside the clone; CARGO_TARGET_DIR unset)
+```
+
+On a machine that carries either variable, run the gate as:
+`env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR scripts/ci.sh offline`.
+
 It also needs unprivileged user namespaces (`unshare -rn`) or bubblewrap. It
 probes `unshare -rn true` first and then
 `bwrap --unshare-net --dev-bind / / true`. Without either, the gate exits 1:
@@ -413,10 +521,12 @@ signing). Use the GitHub Actions workflow:
   the sandbox and only fills `$CARGO_HOME` with what the lock already records;
   the gate still builds with no network. The trust gate therefore runs on every
   pull request in two jobs; the offline property is proven off pull requests
-  only. A hosted run of the four jobs was observed on 2026-11-19 (run
-  44587086777): `frontend`, `rust` and `build` passed; `offline` failed on the
-  cold registry cache, before any compile, which the warm step fixes. The rerun
-  is pending, and the evidence README records the failure and the fix.
+  only. Two hosted runs are recorded on 2026-11-19: run
+  [44587086777](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44587086777)
+  caught `offline` failing on a cold registry cache, before any compile, which the
+  warm step fixes. The rerun,
+  [44591752926](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44591752926),
+  is green on all four jobs. The evidence README records both.
 - `.github/workflows/release.yml` — triggered by a `v*` tag or manually.
   Matrix: Ubuntu 24.04, Windows latest, macOS arm64, macOS x64. Uses
   `tauri-apps/tauri-action` to create a draft release with installers.
@@ -451,9 +561,15 @@ warnings until it is.
 | Symptom | Likely cause |
 |---|---|
 | Blank window in dev, CSP errors in console | CSP is missing the dev localhost origins |
-| `heif-rs` fails with a checksum mismatch | A committed archive or an extracted library does not match `manifest.json`; run `scripts/heif-artifacts.sh verify` and follow its `fix:` line |
+| `heif-rs` fails with a checksum mismatch | A committed archive, an extracted library or `include/` tree, or a cached `bindings.rs` does not match the pin; run `scripts/heif-artifacts.sh verify` and follow its `fix:` line. A header mismatch names the cache directory to delete, after which the build re-extracts from the archive |
 | `heif-rs: committed codec artifact <archive> is missing` | A committed archive is absent from `src-tauri/vendor/heif-bundles/`. The build never fetches a committed artifact; restore it with `scripts/heif-artifacts.sh fetch <archive>`, which keeps the download only if it matches the manifest |
 | `heif-rs: no pinned codec artifact for target …` | The target is not one of the eight in the manifest; `HEIF_BINARIES_DIR` is the escape hatch |
+| `CARGO_TARGET_DIR … is not a readable directory; refusing to report a cold cache` | `verify` (and therefore `trust`) was run with the variable pointing at a path that does not exist or cannot be read. Point it at the tree the build used, or unset it; note a relative value resolves against the repository root here, not `src-tauri` |
+| `heif-rs: …/out has no extracted bundle directory` | A `heif-rs` build ran in that tree but left no extraction, usually a `HEIF_BINARIES_DIR` build. Delete that `out/` and rebuild with the manifest, or delete it after an override build before relying on `verify` |
+| `offline gate: HEIF_BINARIES_DIR is set to …` or `offline gate: CARGO_TARGET_DIR is set to …` | An override inherited from the shell. The offline gate refuses rather than certify a run that used other codec bytes or another build tree; rerun with `env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR scripts/ci.sh offline` |
+| `heif-rs: …/binaries-heif-bundle-… is not a directory (symlink or special file)` | The extraction entry was replaced by a link or another non-directory. `find -type d` does not descend or match it, so the gate fails closed and says what it found; delete it and rebuild |
+| `heif-artifacts: cannot scan …: find exited …` | `find` could not read part of a scanned tree, so the scan is incomplete. Fix the permissions or delete the unreadable build directory; a partial scan is never reported as a cold cache |
+| `heif-artifacts: … contains a newline; cannot scan a path this script cannot represent` | `CARGO_TARGET_DIR` (or a resolved root) has a newline in its path. Rename the directory or point the variable at a path without one; the gate refuses rather than printing an ambiguous transcript |
 | `webkit2gtk-4.1` not found | Install the Tauri system dependencies |
 | HEIC encode fails with an encoder error | x265 build mismatch; the bundled binary is 8-bit only |
 | App opens, conversions do nothing | Check the WebView console; command errors surface as toasts |

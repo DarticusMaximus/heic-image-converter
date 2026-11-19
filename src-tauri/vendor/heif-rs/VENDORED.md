@@ -50,7 +50,8 @@ target with no checksum and extracts it. The replacement keeps upstream's
 `main` directives, `emit_link_directives` (including the macOS
 `link_compiler_rt_builtins` workaround) and `generate_bindings` — `src/sys.rs`
 is `include!(concat!(env!("OUT_DIR"), "/bindings.rs"))`, so the bindgen step is
-load-bearing — and changes only where the binaries come from:
+load-bearing — and changes only where the binaries come from and what the cache
+that holds them is trusted for:
 
 1. `HEIF_BINARIES_DIR`, when set, is used as-is (the documented local/custom
    override), after asserting `include/` and `lib/` exist.
@@ -61,7 +62,29 @@ load-bearing — and changes only where the binaries come from:
    release URL for an artifact the manifest marks `committed: false`.
    The SHA-256 is verified **before** extraction, and the extracted
    `<lib>` is verified against `lib_sha256` on a cache hit.
-4. Feature 03's local-only rule: a `committed: true` archive that is missing
+4. Extraction goes into a directory keyed by the archive's own hash,
+   `binaries-heif-bundle-<release>-<first 12 hex of the archive sha256>`, so a
+   cache hit can only be the extraction of the archive this run verified. The
+   release stays in the name for a readable `target/` tree; it carries no
+   trust.
+5. Every file in the extracted `include/` tree is hashed and compared with the
+   same member of the archive *before* bindgen reads it. `heif.h` is only the
+   entry point: bindgen parses the 17 sibling headers it includes, so each of
+   them is a codegen input and each is checked. A mismatch, a missing file, or
+   an extracted header the archive does not carry fails the build naming the
+   extracted path, both hashes, and the cache directory to delete. Nothing is
+   silently re-extracted: a poisoned header stays visible to whoever needs to
+   know, and the archive is the only trusted source for it. `HEIF_BINARIES_DIR`
+   is exempt, as it is for every other check.
+6. `bindings.rs` is generated from the verified tree on every run of the build
+   script and written with a `bindings.rs.sha256` sidecar recording the digest
+   of what was written. Both files are written only when their bytes change, so
+   an unchanged regeneration does not mark the crate dirty on every build. The
+   script emits `cargo:rerun-if-changed` for the `include/` directory (so a
+   sibling header edit is an input), for `bindings.rs`, and for the sidecar, so
+   an edited or deleted cache file forces a rerun rather than being compiled
+   as-is.
+7. Feature 03's local-only rule: a `committed: true` archive that is missing
    from `../heif-bundles/` fails the build with the archive name and the
    `scripts/heif-artifacts.sh fetch <archive>` repair command — the pinned
    release URL is never a fallback for it.
@@ -72,9 +95,11 @@ command that re-fetches the archive.
 ### Added: `build_support.rs`
 
 Pure helpers (manifest parse, target selection, URL rendering, hex SHA-256,
-checksum verification): no network, no extraction. Compiled twice — by
+checksum verification, cache-key naming, and the include/-tree comparison the
+header check uses): no network, no extraction, and no filesystem access —
+the build script reads the bytes and hands them in. Compiled twice — by
 `build.rs`, and by `src-tauri/src/codec_artifacts.rs` through `#[path = ...]`
-so the selection logic is unit-tested rather than trusted.
+so the selection and comparison logic is unit-tested rather than trusted.
 
 ### Added: `VENDORED.md`
 
@@ -93,6 +118,10 @@ also bumps the recorded upstream version here, or upstream.
 size, SHA-256 and expected library hash is recorded in
 `src-tauri/vendor/heif-bundles/manifest.json`, which is the authority. The
 committed archives live next to it.
+
+The manifest records no hash for the `include/` tree: the headers are read
+from the archive itself, and the archive's own hash is what makes them trusted.
+Recording a second set of hashes would only add values to drift.
 
 Each `bundle_*` archive merges libheif, libde265 and x265 into a single static
 library; that merge is why the encoder cannot be unlinked separately.

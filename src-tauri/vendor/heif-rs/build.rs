@@ -10,6 +10,10 @@
 //! the archive's SHA-256 *before* extracting it, and verifies the extracted library's SHA-256 afterwards. A mismatch is
 //! fatal, so a swapped or corrupted download fails the build instead of silently becoming the product.
 //!
+//! The cache is a third untrusted input, so it is not trusted: it is keyed by the archive's own hash, the whole
+//! extracted `include/` tree is re-checked against the archive's copy before bindgen reads it, and `bindings.rs` is
+//! regenerated on every run (written only when its bytes change) with a `.sha256` sidecar recording what was written.
+//!
 //! To build against a custom build of libheif (or fully offline), set the `HEIF_BINARIES_DIR` environment variable to a
 //! directory that contains `include/` and `lib/` subdirectories laid out like the extracted `bundle_<os>_<arch>.zip`
 //! archives. The override is used as-is and skips the manifest and its checksums entirely.
@@ -18,7 +22,8 @@
 mod build_support;
 
 use build_support::{
-    Artifact, Manifest, archive_url, parse_manifest, select, sha256_hex, verify_checksum,
+    Artifact, Manifest, archive_url, cache_dir_name, parse_manifest, select, sha256_hex,
+    verify_checksum, verify_extracted_tree,
 };
 use std::env;
 use std::fs;
@@ -89,16 +94,20 @@ fn resolve_from_manifest() -> PathBuf {
     }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
-    // The release number is part of the directory name, so a cache from another codec release is never reused.
-    let cache_dir = out_dir.join(format!("binaries-heif-bundle-{}", manifest.release));
+    // The archive's own hash is part of the directory name, so the only way a header or library can appear under a
+    // cache key is by being extracted from the archive this run verified. A directory left by another artifact,
+    // another release, or an older pin is never picked up by name.
+    let cache_dir = out_dir.join(cache_dir_name(&manifest.release, &artifact.sha256));
 
-    // Idempotent: a fully extracted cache from a previous build is reused as-is, but only after re-checking the
-    // library, so a poisoned or truncated cache directory fails here instead of being linked.
+    // Extraction is idempotent, and a directory that already exists is verified below rather than trusted: a poisoned
+    // header or library fails the build naming the file instead of being silently replaced, so the tamper stays
+    // visible to the person who needs to know about it.
     if !(cache_dir.join("lib").is_dir() && cache_dir.join("include").is_dir()) {
         extract_zip(&bytes, &cache_dir);
     }
 
     verify_library(&cache_dir, artifact);
+    verify_include_tree(&bytes, &cache_dir, artifact);
     cache_dir
 }
 
@@ -143,6 +152,90 @@ fn verify_library(cache_dir: &Path, artifact: &Artifact) {
             artifact.archive,
             cache_dir.display()
         );
+    }
+}
+
+/// Verifies the whole extracted `include/` tree against the same members of the hash-verified archive.
+///
+/// `verify_library` proves what will be linked; this proves what bindgen will read. `heif.h` is only the entry point —
+/// bindgen parses every header it includes transitively, so a sibling is just as load-bearing as the root, and all of
+/// them are checked against the archive's copy on every run, cache hit included. A mismatch, a missing file, or an
+/// extracted header the archive does not have fails the build naming the file and the directory to delete; nothing is
+/// silently re-extracted.
+fn verify_include_tree(bytes: &[u8], cache_dir: &Path, artifact: &Artifact) {
+    let archive_members = read_archive_include_tree(bytes, &artifact.archive);
+    let extracted_members = read_extracted_include_tree(cache_dir);
+    if let Err(message) =
+        verify_extracted_tree(&archive_members, &extracted_members, artifact, cache_dir)
+    {
+        panic!("{message}");
+    }
+}
+
+/// Reads every regular file under `include/` from an in-memory zip archive. Extraction and this read see the same
+/// verified bytes.
+fn read_archive_include_tree(bytes: &[u8], archive: &str) -> Vec<(String, Vec<u8>)> {
+    let reader = io::Cursor::new(bytes);
+    let mut zip = zip::ZipArchive::new(reader).expect("heif-rs: invalid zip archive");
+
+    let mut members = Vec::new();
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).expect("heif-rs: corrupt zip entry");
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(relative) = entry.enclosed_name() else {
+            continue; // skip unsafe / absolute paths, exactly as extraction does
+        };
+        let path = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if !path.starts_with("include/") {
+            continue;
+        }
+
+        let mut member = Vec::new();
+        io::copy(&mut entry, &mut member)
+            .unwrap_or_else(|e| panic!("heif-rs: cannot read {path} from {archive}: {e}"));
+        members.push((path, member));
+    }
+    members
+}
+
+/// Reads every file under the extracted `include/` tree, keyed the same way as the archive's members. A missing
+/// `include/` directory yields an empty list, which the tree check reports as every member missing.
+fn read_extracted_include_tree(cache_dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let root = cache_dir.join("include");
+    let mut members = Vec::new();
+    if root.is_dir() {
+        collect_include_files(&root, "include", &mut members);
+    }
+    members
+}
+
+/// Walks `dir` recursively, prefixing every file's key with the path from the extraction root.
+fn collect_include_files(dir: &Path, prefix: &str, members: &mut Vec<(String, Vec<u8>)>) {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", dir.display()));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", dir.display()));
+        let path = entry.path();
+        let key = format!("{prefix}/{}", entry.file_name().to_string_lossy());
+        let file_type = entry
+            .file_type()
+            .unwrap_or_else(|e| panic!("heif-rs: cannot stat {}: {e}", path.display()));
+
+        if file_type.is_dir() {
+            collect_include_files(&path, &key, members);
+            continue;
+        }
+        // Anything that is not a directory is read as a file, so a symlink or special file extracted into the tree
+        // shows up as an extra member and fails the check instead of being skipped.
+        let bytes = fs::read(&path)
+            .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", path.display()));
+        members.push((key, bytes));
     }
 }
 
@@ -256,10 +349,21 @@ fn link_compiler_rt_builtins() {
     println!("cargo:rustc-link-lib=static=clang_rt.osx");
 }
 
-/// Generates raw FFI bindings from `include/libheif/heif.h` into `OUT_DIR/bindings.rs`.
+/// Generates raw FFI bindings from the verified `include/` tree into `OUT_DIR/bindings.rs`.
+///
+/// Cargo cannot verify a cached build-script output, so the bindings are regenerated on every run and stamped:
+/// `bindings.rs.sha256` records the digest of what was written, and `cargo:rerun-if-changed` on the file makes a later
+/// edit force another run. Both files are written only when their bytes change, because cargo compares the stamped
+/// file's mtime with the previous build: rewriting an identical file would mark this crate dirty on every build. The
+/// same sidecar is checked by `scripts/heif-artifacts.sh verify`.
 fn generate_bindings(include_dir: &Path) {
     let header = include_dir.join("libheif").join("heif.h");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // The whole tree is an input: bindgen parses every sibling header `heif.h` includes, so a change to any of them must
+    // re-run this script before anything is linked. bindgen emits nothing itself, and `verify_include_tree` is what
+    // turns a change into a readable failure.
+    println!("cargo:rerun-if-changed={}", include_dir.display());
 
     let bindings = bindgen::Builder::default()
         .header(header.to_string_lossy())
@@ -274,7 +378,27 @@ fn generate_bindings(include_dir: &Path) {
         .generate()
         .expect("heif-rs: failed to generate bindings from heif.h");
 
-    bindings
-        .write_to_file(out_dir.join("bindings.rs"))
-        .expect("heif-rs: failed to write bindings.rs");
+    let rendered = bindings.to_string();
+    let bindings_path = out_dir.join("bindings.rs");
+    write_if_different(&bindings_path, rendered.as_bytes());
+
+    let sidecar = out_dir.join("bindings.rs.sha256");
+    write_if_different(
+        &sidecar,
+        format!("{}\n", sha256_hex(rendered.as_bytes())).as_bytes(),
+    );
+
+    // Both files are inputs as well as outputs: an edited or deleted one must force a regeneration rather than leave a
+    // stale or unattested copy behind.
+    println!("cargo:rerun-if-changed={}", bindings_path.display());
+    println!("cargo:rerun-if-changed={}", sidecar.display());
+}
+
+/// Writes `contents` only when they differ from what is already on disk, leaving the mtime untouched otherwise.
+fn write_if_different(path: &Path, contents: &[u8]) {
+    if fs::read(path).is_ok_and(|current| current == contents) {
+        return;
+    }
+    fs::write(path, contents)
+        .unwrap_or_else(|e| panic!("heif-rs: cannot write {}: {e}", path.display()));
 }

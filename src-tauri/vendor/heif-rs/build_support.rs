@@ -7,7 +7,9 @@
 //! directives, no network, no filesystem access, no extraction, no panics on
 //! untrusted input. Everything outside `std` it needs is `serde_json` (parsing)
 //! and `sha2` (hashing), which are build dependencies of the vendored crate and
-//! dev-dependencies of `src-tauri`.
+//! dev-dependencies of `src-tauri`. The archive and extracted bytes are read by
+//! the caller (`build.rs`, or a test) and handed in; this file only compares
+//! them.
 //!
 //! `parse_manifest` reads the JSON field by field instead of deriving
 //! `Deserialize`, because the vendored crate's build dependencies carry
@@ -17,7 +19,9 @@
 
 use serde_json::{Map as JsonMap, Value as Json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::Path;
 
 /// The manifest root, as committed at `vendor/heif-bundles/manifest.json`.
 ///
@@ -171,6 +175,138 @@ pub fn verify_checksum(a: &Artifact, actual_hex: &str) -> Result<(), String> {
          fix: scripts/heif-artifacts.sh fetch {}",
         a.archive, a.sha256, actual_hex, a.archive
     ))
+}
+
+/// The header the bindings are generated from, the root of the tree bindgen
+/// parses transitively. It is read from the hash-verified archive, never from
+/// the extracted cache; the sibling headers it includes are checked the same
+/// way by [`verify_extracted_tree`].
+pub const HEADER_MEMBER: &str = "include/libheif/heif.h";
+
+/// Directory name for one extraction cache: `binaries-heif-bundle-<release>-<sha12>`.
+///
+/// The archive's own SHA-256 is part of the key, so a directory can only ever be
+/// the extraction of an archive whose bytes the build has already verified. The
+/// release is kept in the name for a readable `target/` tree; it carries no
+/// trust. A hash shorter than 12 characters is used whole rather than
+/// panicking, so a hand-edited manifest stays a readable failure.
+pub fn cache_dir_name(release: &str, archive_sha256: &str) -> String {
+    let key: String = archive_sha256.chars().take(12).collect();
+    format!("binaries-heif-bundle-{release}-{key}")
+}
+
+/// Compares one extracted archive member against the same member read from the
+/// hash-verified archive.
+///
+/// `archive_member` is the bytes inside the archive; `extracted` is what is on
+/// disk, or `None` when the file is absent. Reading the zip stays in the build
+/// script: this file is compiled without the `zip` crate by the manifest test
+/// suite, so it takes bytes and returns a verdict.
+///
+/// # Errors
+///
+/// The error names the offending extracted path, the archive it was supposed to
+/// come from, both hashes, and how to repair the cache:
+///
+/// ```text
+/// heif-rs: /…/binaries-heif-bundle-26.10.1-b5cbed5d08fc/include/libheif/heif.h
+///   failed its checksum against bundle_linux_x64.zip
+///   expected sha256 cb0bb43f…
+///   actual   sha256 00000000…
+///   fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+///   then delete /…/binaries-heif-bundle-26.10.1-b5cbed5d08fc to force a clean extraction
+/// ```
+pub fn verify_extracted_member(
+    relative_path: &str,
+    archive_member: &[u8],
+    extracted: Option<&[u8]>,
+    artifact: &Artifact,
+    cache_dir: &Path,
+) -> Result<(), String> {
+    let expected = sha256_hex(archive_member);
+    let actual = extracted.map(sha256_hex);
+    if actual.as_deref() == Some(expected.as_str()) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "heif-rs: {} failed its checksum against {}\n  expected sha256 {}\n  actual   sha256 {}\n  \
+         fix: scripts/heif-artifacts.sh fetch {}\n  \
+         then delete {} to force a clean extraction",
+        cache_dir.join(relative_path).display(),
+        artifact.archive,
+        expected,
+        actual.as_deref().unwrap_or("(no such file)"),
+        artifact.archive,
+        cache_dir.display()
+    ))
+}
+
+/// Compares an extracted `include/` tree against the hash-verified archive's
+/// copy of it, entry by entry.
+///
+/// `heif.h` is only the entry point: bindgen parses every sibling header it
+/// includes, so all of them are codegen inputs and all of them are checked.
+/// Both slices are `(path relative to the extraction root, bytes)`; only files
+/// that exist on disk belong in `extracted_members`, and a member of the
+/// archive with no extracted counterpart fails as a missing file.
+///
+/// An extracted file that the archive does not contain is also a failure: the
+/// cache is supposed to be exactly the archive's tree, and an unexpected header
+/// would otherwise be blessed by a check that only looks one way.
+///
+/// # Errors
+///
+/// The first mismatch in path order, in the same shape as
+/// [`verify_extracted_member`]. An archive with no `include/` entries is an
+/// error naming the archive, because it can vouch for nothing.
+pub fn verify_extracted_tree(
+    archive_members: &[(String, Vec<u8>)],
+    extracted_members: &[(String, Vec<u8>)],
+    artifact: &Artifact,
+    cache_dir: &Path,
+) -> Result<(), String> {
+    if archive_members.is_empty() {
+        return Err(format!(
+            "heif-rs: {} has no include/ entries\n  \
+             expected the bundle's header tree under include/\n  \
+             actual   none found in the archive\n  \
+             fix: scripts/heif-artifacts.sh fetch {}",
+            artifact.archive, artifact.archive
+        ));
+    }
+
+    let archive: BTreeMap<&str, &[u8]> = archive_members
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect();
+    let mut extracted: BTreeMap<&str, &[u8]> = extracted_members
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect();
+
+    // Sorted by path, so the failure a build reports is deterministic.
+    for (path, expected) in &archive {
+        let actual = extracted.remove(*path);
+        verify_extracted_member(path, expected, actual, artifact, cache_dir)?;
+    }
+
+    if let Some(extra) = extracted.keys().next() {
+        return Err(format!(
+            "heif-rs: {} is not part of {}\n  \
+             expected sha256 (no such file in the archive)\n  \
+             actual   sha256 {}\n  \
+             fix: scripts/heif-artifacts.sh fetch {}\n  \
+             then delete {} to force a clean extraction",
+            cache_dir.join(extra).display(),
+            artifact.archive,
+            sha256_hex(extracted[extra]),
+            artifact.archive,
+            cache_dir.display()
+        ));
+    }
+
+    Ok(())
 }
 
 /// Where a pinned codec archive may be obtained from.

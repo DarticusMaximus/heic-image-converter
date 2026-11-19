@@ -17,8 +17,8 @@
 mod build_support;
 
 use build_support::{
-    Manifest, Source, archive_url, parse_manifest, resolve_source, select, sha256_hex,
-    verify_checksum,
+    HEADER_MEMBER, Manifest, Source, archive_url, cache_dir_name, parse_manifest, resolve_source,
+    select, sha256_hex, verify_checksum, verify_extracted_member, verify_extracted_tree,
 };
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -541,4 +541,263 @@ fn an_uncommitted_artifact_may_be_fetched() {
             artifact.archive
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// 12. The extraction cache cannot supply unverified codegen inputs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_extraction_cache_is_keyed_by_the_archive_hash() {
+    let manifest = load_manifest();
+    let linux = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let arm = select(&manifest, "linux", "any", "aarch64")
+        .expect("linux/aarch64 must be pinned to an artifact");
+
+    assert_eq!(
+        cache_dir_name(&manifest.release, &linux.sha256),
+        format!(
+            "binaries-heif-bundle-{}-{}",
+            manifest.release,
+            &linux.sha256[..12]
+        ),
+        "the key must carry the release and the first 12 hex digits of the archive hash"
+    );
+    assert_ne!(
+        cache_dir_name(&manifest.release, &linux.sha256),
+        cache_dir_name(&manifest.release, &arm.sha256),
+        "two archives must never share one cache directory"
+    );
+
+    let keys: BTreeSet<String> = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| cache_dir_name(&manifest.release, &artifact.sha256))
+        .collect();
+    assert_eq!(
+        keys.len(),
+        manifest.artifacts.len(),
+        "every pinned archive must get its own cache key, so a poisoned tree cannot \
+         be reused by another target"
+    );
+
+    assert_eq!(
+        cache_dir_name("26.10.1", "abc"),
+        "binaries-heif-bundle-26.10.1-abc",
+        "a short hash must be used whole rather than panicking on a manifest edit"
+    );
+}
+
+#[test]
+fn an_extracted_header_is_only_accepted_when_it_matches_the_archive() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir = Path::new("/target/debug/build/heif-rs-deadbeef/out")
+        .join(cache_dir_name(&manifest.release, &artifact.sha256));
+
+    let from_archive = b"#ifndef LIBHEIF_HEIF_H\n#define LIBHEIF_HEIF_H\n#endif\n";
+    verify_extracted_member(
+        HEADER_MEMBER,
+        from_archive,
+        Some(from_archive),
+        artifact,
+        &cache_dir,
+    )
+    .expect("the archive's own header bytes must pass");
+
+    let tampered =
+        b"#ifndef LIBHEIF_HEIF_H\n#define LIBHEIF_HEIF_H\ntypedef void *heif_context;\n#endif\n";
+    let err = verify_extracted_member(
+        HEADER_MEMBER,
+        from_archive,
+        Some(tampered),
+        artifact,
+        &cache_dir,
+    )
+    .expect_err("a header that differs from the archive must fail the build");
+
+    assert!(
+        err.contains(&cache_dir.join(HEADER_MEMBER).display().to_string()),
+        "the error must name the offending extracted file, got: {err}"
+    );
+    assert!(
+        err.contains(&sha256_hex(from_archive)),
+        "the error must name the expected hash, got: {err}"
+    );
+    assert!(
+        err.contains(&sha256_hex(tampered)),
+        "the error must name the actual hash, got: {err}"
+    );
+    assert!(
+        err.contains(&artifact.archive),
+        "the error must name the archive the header is supposed to come from, got: {err}"
+    );
+    assert!(
+        err.contains(&format!("fetch {}", artifact.archive)),
+        "the error must name the repair command, got: {err}"
+    );
+    assert!(
+        err.contains(&format!(
+            "then delete {} to force a clean extraction",
+            cache_dir.display()
+        )),
+        "the error must name the extraction to delete, got: {err}"
+    );
+}
+
+#[test]
+fn a_missing_extracted_header_is_reported_as_absent() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir =
+        Path::new("/target/debug/build/heif-rs-deadbeef/out").join("binaries-heif-bundle-test");
+
+    let err = verify_extracted_member(HEADER_MEMBER, b"#endif\n", None, artifact, &cache_dir)
+        .expect_err("an absent header must fail rather than pass silently");
+
+    assert!(
+        err.contains(&cache_dir.join(HEADER_MEMBER).display().to_string()),
+        "the error must name the missing file, got: {err}"
+    );
+    assert!(
+        err.contains("actual   sha256 (no such file)"),
+        "the error must say the file is absent instead of printing a bogus hash, got: {err}"
+    );
+}
+
+#[test]
+fn a_sibling_header_change_is_rejected() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir =
+        Path::new("/target/debug/build/heif-rs-deadbeef/out").join("binaries-heif-bundle-test");
+    let sibling = "include/libheif/heif_image_handle.h";
+
+    // `heif.h` is only the entry point: bindgen parses this header transitively, so it is a
+    // codegen input and must be checked by name like any other.
+    let from_archive = b"#ifndef LIBHEIF_HEIF_IMAGE_HANDLE_H\n#endif\n";
+    verify_extracted_member(
+        sibling,
+        from_archive,
+        Some(from_archive),
+        artifact,
+        &cache_dir,
+    )
+    .expect("the archive's own sibling header bytes must pass");
+
+    let tampered = b"#ifndef LIBHEIF_HEIF_IMAGE_HANDLE_H\nvoid heif_attack_probe(void);\n#endif\n";
+    let err = verify_extracted_member(sibling, from_archive, Some(tampered), artifact, &cache_dir)
+        .expect_err("a sibling header that differs from the archive must fail the build");
+
+    assert!(
+        err.contains(&cache_dir.join(sibling).display().to_string()),
+        "the error must name the sibling header, got: {err}"
+    );
+    assert!(
+        err.contains(&sha256_hex(tampered)),
+        "the error must name the actual hash, got: {err}"
+    );
+}
+
+#[test]
+fn the_include_tree_is_checked_member_by_member() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir =
+        Path::new("/target/debug/build/heif-rs-deadbeef/out").join("binaries-heif-bundle-test");
+
+    let root = ("include/libheif/heif.h".to_owned(), b"root\n".to_vec());
+    let sibling = (
+        "include/libheif/heif_image_handle.h".to_owned(),
+        b"sibling\n".to_vec(),
+    );
+    let archive = vec![root.clone(), sibling.clone()];
+
+    verify_extracted_tree(&archive, &archive, artifact, &cache_dir)
+        .expect("an exact copy of the archive's tree must pass");
+
+    // A changed sibling fails even though `heif.h` is untouched.
+    let mut extracted = archive.clone();
+    extracted[1].1 = b"sibling\nvoid heif_attack_probe(void);\n".to_vec();
+    let err = verify_extracted_tree(&archive, &extracted, artifact, &cache_dir)
+        .expect_err("a changed sibling must fail the tree check");
+    assert!(
+        err.contains(&cache_dir.join(&sibling.0).display().to_string()),
+        "the error must name the changed sibling, got: {err}"
+    );
+
+    // A member the archive has and the cache does not is a failure naming it.
+    let missing = vec![root];
+    let err = verify_extracted_tree(&archive, &missing, artifact, &cache_dir)
+        .expect_err("a missing archive member must fail the tree check");
+    assert!(
+        err.contains(&cache_dir.join(&sibling.0).display().to_string()),
+        "the error must name the missing file, got: {err}"
+    );
+    assert!(
+        err.contains("(no such file)"),
+        "the error must say the file is absent, got: {err}"
+    );
+}
+
+#[test]
+fn an_extra_file_in_the_extracted_include_tree_is_rejected() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir =
+        Path::new("/target/debug/build/heif-rs-deadbeef/out").join("binaries-heif-bundle-test");
+
+    let archive = vec![(HEADER_MEMBER.to_owned(), b"root\n".to_vec())];
+    let mut extracted = archive.clone();
+    extracted.push((
+        "include/libheif/heif_smuggled.h".to_owned(),
+        b"void heif_attack_probe(void);\n".to_vec(),
+    ));
+
+    // Decided: an extracted header that the archive does not hold is a failure. The cache is
+    // supposed to be exactly one extraction, and a check that only looked one way would bless an
+    // unexpected file.
+    let err = verify_extracted_tree(&archive, &extracted, artifact, &cache_dir)
+        .expect_err("an extra extracted header must fail the tree check");
+    assert!(
+        err.contains(
+            &cache_dir
+                .join("include/libheif/heif_smuggled.h")
+                .display()
+                .to_string()
+        ),
+        "the error must name the extra file, got: {err}"
+    );
+    assert!(
+        err.contains("is not part of"),
+        "the error must say the file is not in the archive, got: {err}"
+    );
+}
+
+#[test]
+fn an_archive_without_an_include_tree_is_rejected() {
+    let manifest = load_manifest();
+    let artifact = select(&manifest, "linux", "any", "x86_64")
+        .expect("linux/x86_64 must be pinned to an artifact");
+    let cache_dir =
+        Path::new("/target/debug/build/heif-rs-deadbeef/out").join("binaries-heif-bundle-test");
+
+    // An archive with no `include/` entries can vouch for nothing; it is an error naming the
+    // archive, never a vacuous pass.
+    let err = verify_extracted_tree(&[], &[], artifact, &cache_dir)
+        .expect_err("an archive with no include/ entries must fail");
+    assert!(
+        err.contains(&artifact.archive),
+        "the error must name the archive, got: {err}"
+    );
+    assert!(
+        err.contains("has no include/ entries"),
+        "the error must say the archive carries no header tree, got: {err}"
+    );
 }

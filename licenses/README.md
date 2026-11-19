@@ -68,6 +68,10 @@ The application itself is GPL-3.0-or-later; its text is the root
 LGPL-3.0 are the texts a redistributor needs for the components on top of the
 application's own license.
 
+The LGPL components also need a copy of the GNU GPL under LGPL-3.0 §4(b). That
+copy is the root [`../LICENSE`](../LICENSE) (GPL-3.0), not `GPL-2.0.txt` (x265's
+text), and it must accompany the binary alongside these three.
+
 ## Re-checking
 
 From the repository root:

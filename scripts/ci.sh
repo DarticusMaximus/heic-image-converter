@@ -14,7 +14,8 @@ Subcommands:
             throwaway directory, then run scripts/ci.sh rust inside a network namespace (needs
             unshare -rn or bwrap). Not part of `all`. CI_OFFLINE_DIR picks the working directory
             and needs about 8 GiB free; point it at a disk-backed path when the default is a small
-            tmpfs
+            tmpfs. Refuses to run when HEIF_BINARIES_DIR or CARGO_TARGET_DIR is set, because either
+            one changes which codec bytes and which build tree a PASS would describe
   all       Run trust, then frontend, then rust, then build; stop at the first failure
 
 Options:
@@ -127,6 +128,25 @@ trap cleanup_offline EXIT
 offline() {
   offline_running=1
 
+  # An inherited override steers the build away from the bytes this gate claims
+  # to prove, and nothing later in the transcript would say so. Refuse before the
+  # disk check and the clone: a run that cannot describe what it certified must
+  # not start. Both variables are reported in one pass so a machine with both set
+  # learns about both.
+  local overrides_set=0
+  if [[ -n "${HEIF_BINARIES_DIR-}" ]]; then
+    echo "offline gate: HEIF_BINARIES_DIR is set to \"$HEIF_BINARIES_DIR\": it bypasses the committed bundle manifest and its hashes, so a green result would not prove the committed codec bytes" >&2
+    overrides_set=1
+  fi
+  if [[ -n "${CARGO_TARGET_DIR-}" ]]; then
+    echo "offline gate: CARGO_TARGET_DIR is set to \"$CARGO_TARGET_DIR\": it moves the build out of the clone, so the copy this gate proves is not the one the clone builds" >&2
+    overrides_set=1
+  fi
+  if [[ "$overrides_set" -eq 1 ]]; then
+    echo "offline gate: refusing to certify with an override set; rerun with: env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR ./scripts/ci.sh offline" >&2
+    exit 1
+  fi
+
   local rev short_rev
   rev="$(git -C "$repo_root" rev-parse HEAD)"
   short_rev="$(git -C "$repo_root" rev-parse --short HEAD)"
@@ -196,8 +216,26 @@ offline() {
   # saved transcript explains itself.
   echo "offline gate: HEAD $rev"
   echo "offline gate: isolation: $iso_name"
+  # Which bytes and which tree, stated before the build rather than inferred
+  # after it. The clone path is printed so the two paths are checkable, and both
+  # overrides are named as unset because the check at the top of this function is
+  # what makes that true.
+  echo "offline gate: codec source: $offline_clone_dir/repo/src-tauri/vendor/heif-bundles/manifest.json (committed archives; HEIF_BINARIES_DIR unset)"
+  echo "offline gate: target: $offline_clone_dir/repo/src-tauri/target (inside the clone; CARGO_TARGET_DIR unset)"
   echo "offline gate: positive control (outside the sandbox): $probe_cmd"
   echo "offline gate: positive control (inside the sandbox): $iso_name $probe_cmd"
+
+  # bash 3.2 — the /bin/bash macOS ships — aborts an array expansion under
+  # `set -u` when the array holds no elements, where bash 4.4+ expands to
+  # nothing. Both arrays are assigned by this point, so these are assertions as
+  # much as guards: they turn a would-be `unbound variable` abort into a named
+  # line, and they keep the expansions below safe on the older shell.
+  if [[ ${#iso[@]} -eq 0 ]]; then
+    die "offline gate: internal error: the isolation wrapper command is empty; refusing to certify"
+  fi
+  if [[ ${#probe[@]} -eq 0 ]]; then
+    die "offline gate: internal error: the network probe command is empty; refusing to certify"
+  fi
 
   # The outside run goes first on purpose. On a machine with no working network,
   # the inside probe would fail for a reason that has nothing to do with the
@@ -216,13 +254,18 @@ offline() {
   # what build.rs spawns. The namespace makes the refusal binding on everything
   # the build runs. Together they prove the claim.
   #
+  # `-u` scrubs the two overrides in the child as well, even though the check at
+  # the top of this function already refused them: a variable exported between
+  # that check and this line would otherwise reach the build, and a build steered
+  # by either is not the one this gate certifies.
+  #
   # The clone's own committed scripts/ci.sh is what runs, so the committed gate is
   # what gets proven. The script's `set -o pipefail` makes this pipeline's status
   # the gate's status, so `tee` cannot launder a failure.
   local log="$offline_clone_dir/rust-gate.log"
   echo "==> Rust gate in the clone (CARGO_NET_OFFLINE=true)"
   if ! ( cd "$offline_clone_dir/repo" \
-         && "${iso[@]}" env CARGO_NET_OFFLINE=true ./scripts/ci.sh rust ) \
+         && "${iso[@]}" env -u HEIF_BINARIES_DIR -u CARGO_TARGET_DIR CARGO_NET_OFFLINE=true ./scripts/ci.sh rust ) \
        2>&1 | tee "$log"; then
     tail -n 40 "$log" >&2
     exit 1
