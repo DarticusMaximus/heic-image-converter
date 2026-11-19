@@ -1,0 +1,69 @@
+# tamper-library.log — break (b): one byte appended to an extracted codec library
+# Date: 2026-11-19
+# Machine: Arch Linux, rustc 1.99.1, cargo 1.99.1
+# Expectation: scripts/ci.sh trust exits non-zero and names the corrupted library.
+
+# Extracted library before tampering:
+#   src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a
+#   bytes  12953188
+#   sha256 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3
+
+$ printf "X" >> src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a
+#   bytes  12953189
+#   sha256 9d9adf46ffe38fd9ba97db6b4942983975c95449f36fc3da0cd50b971e01e905
+
+$ scripts/ci.sh trust
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+heif-rs: src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a failed its checksum
+  expected sha256 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3 (bundle_linux_x64.zip)
+  expected sha256 c7d346e31e98bfde0ffe16190b271159b884d9d3cb4761350d6be794c0158fa0 (bundle_linux_arm64.zip)
+  expected sha256 1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992 (bundle_osx_x64.zip)
+  expected sha256 f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481 (bundle_osx_arm64.zip)
+  expected sha256 b0651f1d9a1048c2a6a64be7ee52a8478496043dfbd67250cbdb7db7d221b68d (bundle_mingw_x64.zip)
+  expected sha256 232a0714f4cf3692fc65dcd1ce9b71438174fc2876a593d863206b479c7cd5ee (bundle_mingw_arm64.zip)
+  actual   sha256 9d9adf46ffe38fd9ba97db6b4942983975c95449f36fc3da0cd50b971e01e905
+  fix: scripts/heif-artifacts.sh fetch <archive>   # the pinned lib/libheif.a for this lib
+  then delete src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1 to force a clean extraction
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+failed: 1 problem(s) against 4 committed archive(s) and 3 extracted librar(y/ies)
+trust gate: the artifact verifier failed
+exit status: 1
+
+# Restore: delete the poisoned build directory and let the build re-extract the pinned archive.
+$ rm -rf src-tauri/target/debug/build/heif-rs-676f8025fc455570
+$ (cd src-tauri && cargo build --locked)
+   Compiling heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)
+   Compiling heic-image-converter v0.1.0 (/home/darticus/Code/work/image-converter/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.53s
+exit status: 0
+
+# Confirmation: the gate is green again.
+$ scripts/ci.sh trust
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+heif-artifacts: verified 4 committed archives, 3 extracted libraries
+trust gate: heif-rs 26.10.3 locked from vendor/heif-rs (path package)
+trust gate: PASS
+exit status: 0
+
+# Re-extracted library:
+#   src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a
+#   sha256 1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3
+# restore confirmed: the rebuild re-extracted the pinned bytes

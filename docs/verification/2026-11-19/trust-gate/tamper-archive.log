@@ -1,0 +1,44 @@
+# tamper-archive.log — break (a): one byte appended to a committed archive
+# Date: 2026-11-19
+# Machine: Arch Linux, rustc 1.99.1, cargo 1.99.1
+# Expectation: scripts/ci.sh trust exits non-zero with the verifier's expected/actual/fix text.
+
+# Committed archive before tampering:
+#   src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+#   bytes  3325156
+#   sha256 b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+
+$ printf "X" >> src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+#   bytes  3325157
+#   sha256 b6a298b9a873047f8343f4ef5270835d10f1fcc7769f12379777f1a2dc263c09
+
+$ scripts/ci.sh trust
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+heif-rs: bundle_linux_x64.zip has the wrong size
+  expected bytes 3325156
+  actual   bytes 3325157
+  fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+heif-rs: bundle_linux_x64.zip failed its checksum
+  expected sha256 b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+  actual   sha256 b6a298b9a873047f8343f4ef5270835d10f1fcc7769f12379777f1a2dc263c09
+  fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+failed: 2 problem(s) against 4 committed archive(s) and 3 extracted librar(y/ies)
+trust gate: the artifact verifier failed
+exit status: 1
+
+# Restore:
+$ git checkout -- src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+#   bytes  3325156
+#   sha256 b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+# restore confirmed: the archive is byte-identical to the committed blob again
+# git status for the bundles directory:
+#   (empty above means the archive matches the commit)

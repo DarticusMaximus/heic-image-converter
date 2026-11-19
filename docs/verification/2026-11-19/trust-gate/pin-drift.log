@@ -1,0 +1,106 @@
+# pin-drift.log — breaks (c) and (d): the lock entry and the crate requirement
+# Date: 2026-11-19
+# Machine: Arch Linux, rustc 1.99.1, cargo 1.99.1
+# (c) is the trust gate's own check; (d) is cargo's --locked refusal.
+# Baseline: scripts/ci.sh trust printed 'trust gate: PASS' (see trust-green.log).
+
+# ============================ (c) lock entry drift ============================
+
+# Before: the heif-rs block in src-tauri/Cargo.lock
+#   name = "heif-rs"
+#   version = "26.10.3"
+#   dependencies = [
+
+# Command: replace the version line that follows name = "heif-rs" with 26.10.2.
+$ python3 - <<'PY'  # locate name = "heif-rs", set the next version line to 26.10.2
+#   applied: version = "26.10.2"
+
+$ scripts/ci.sh trust
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+heif-artifacts: verified 4 committed archives, 3 extracted libraries
+trust gate: heif-rs is locked to 26.10.2; expected 26.10.3
+exit status: 1
+
+# Restore:
+$ git restore -- src-tauri/Cargo.lock
+#   sha256 ddf1605394fe2bf055e2ee4ecf1ecd97657f03957efc1997c58db08619d9a1b7
+#   restore confirmed: Cargo.lock is byte-identical to HEAD
+# git status for src-tauri/Cargo.lock:
+#   (empty above means the lock matches the commit)
+
+# ======================= (d) requirement drift in Cargo.toml =======================
+
+# Before: the heif-rs requirement
+#   24:heif-rs = "=26.10.3"
+
+$ sed -i 's/^heif-rs = "=26.10.3"$/heif-rs = "=26.10.2"/' src-tauri/Cargo.toml
+#   after:
+#   24:heif-rs = "=26.10.2"
+
+$ scripts/ci.sh rust
+==> Rust formatting
+==> Rust tests
+    Updating crates.io index
+error: failed to select a version for the requirement `heif-rs = "=26.10.2"`
+candidate versions found which didn't match: 26.10.3, 26.10.1, 26.10.0, ...
+location searched: crates.io index
+required by package `heic-image-converter v0.1.0 (/home/darticus/Code/work/image-converter/src-tauri)`
+exit status: 101
+
+# Restore:
+$ git restore -- src-tauri/Cargo.toml
+#   requirement: 24:heif-rs = "=26.10.3"
+#   restore confirmed: Cargo.toml sha256 7705d0cb5f0e70a3af151717c1dc7dbe0c3a502dd62e3958614a42d55dd99f38 == HEAD
+
+# --------------------- supplementary observation (not the prescribed break) ---------------------
+#
+# The prescribed edit to "=26.10.2" fails before cargo compares the lock: 26.10.2 is not a
+# published heif-rs version (the registry lists 26.10.3, 26.10.1, 26.10.0, ...), so the
+# resolver refuses with "failed to select a version" above. To show the --locked lock-file
+# refusal the spec predicts, the same requirement edit was repeated against 26.10.1, which
+# does resolve; the lock still says 26.10.3, so --locked refuses instead of rewriting it.
+
+$ sed -i 's/^heif-rs = "=26.10.3"$/heif-rs = "=26.10.1"/' src-tauri/Cargo.toml
+#   after: 24:heif-rs = "=26.10.1"
+
+$ scripts/ci.sh rust
+==> Rust formatting
+==> Rust tests
+    Updating crates.io index
+warning: patch `heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+error: cannot update the lock file /home/darticus/Code/work/image-converter/src-tauri/Cargo.lock because --locked was passed to prevent this
+help: to generate the lock file without accessing the network, remove the --locked flag and use --offline instead.
+exit status: 101
+
+# Restore:
+$ git restore -- src-tauri/Cargo.toml
+#   requirement: 24:heif-rs = "=26.10.3"
+#   restore confirmed: Cargo.toml is byte-identical to HEAD
+
+# Confirmation: the manifest is back at the pinned requirement and the locked build passes.
+$ (cd src-tauri && cargo build --locked)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+exit status: 0
+
+# Observation: the two cargo failures differ because of what the registry can supply.
+#   A nonexistent version (=26.10.2) is refused by the resolver. An existing but wrong
+#   version (=26.10.1) resolves and is then refused by --locked, which is the check the spec
+#   assigns to the Rust gate. Neither edit touched Cargo.lock. With the manifest restored,
+#   the build finishes from the existing target/ and exits 0.
+# git status for src-tauri/Cargo.toml and src-tauri/Cargo.lock:
+#   (empty above means both match the commit)
+# Final state: both files match HEAD; no break was left behind.

@@ -1,0 +1,24 @@
+# trust-green.log — baseline run of the codec trust gate
+# Break: none. This is the clean-tree control for the four deliberate breaks.
+# Machine: Arch Linux, rustc 1.99.1, cargo 1.99.1
+# Date: 2026-11-19
+# Precondition: an extracted codec library exists under src-tauri/target/.
+#   Command: cd src-tauri && cargo build --locked
+#   Observed: Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s (exit 0)
+
+$ scripts/ci.sh trust
+==> Codec trust gate
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/debug/build/heif-rs-676f8025fc455570/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/debug/build/heif-rs-7c8605279021ca0e/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+heif-artifacts: verified 4 committed archives, 3 extracted libraries
+trust gate: heif-rs 26.10.3 locked from vendor/heif-rs (path package)
+trust gate: PASS
+exit status: 0
