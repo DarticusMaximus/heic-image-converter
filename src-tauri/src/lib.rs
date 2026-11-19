@@ -11,6 +11,8 @@ mod backend_integration;
 mod codec_artifacts;
 #[cfg(test)]
 mod fixture_corpus;
+#[cfg(test)]
+mod source_review;
 
 use std::path::Path;
 use std::sync::Arc;
