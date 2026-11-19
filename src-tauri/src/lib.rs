@@ -13,6 +13,8 @@ mod codec_artifacts;
 mod fixture_corpus;
 #[cfg(test)]
 mod source_review;
+#[cfg(test)]
+mod trust_gate;
 
 use std::path::Path;
 use std::sync::Arc;

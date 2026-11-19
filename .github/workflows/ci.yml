@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -52,6 +53,9 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      - name: Codec trust gate
+        run: ./scripts/ci.sh trust
+
       - name: Rust gate (formatting and tests)
         run: ./scripts/ci.sh rust
 
@@ -79,8 +83,48 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      - name: Codec trust gate
+        run: ./scripts/ci.sh trust
+
       - name: Install npm dependencies
         run: npm ci
 
       - name: Release build gate (no bundle)
         run: ./scripts/ci.sh build
+
+  offline:
+    name: Offline build
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev libsoup-3.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Lift the user-namespace restriction
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+
+      - name: Probe the network namespace
+        run: |
+          if ! unshare -rn true; then
+            echo "offline job: no usable network namespace; the gate cannot certify" >&2
+            exit 1
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Offline gate
+        run: ./scripts/ci.sh offline
