@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "release": "26.10.1",
+  "crate": { "name": "heif-rs", "version": "26.10.3" },
+  "url_template": "https://github.com/vegidio/binaries-heif/releases/download/{release}/{archive}",
+  "artifacts": [
+    {
+      "archive": "bundle_linux_x64.zip",
+      "os": "linux", "env": "any", "arch": "x86_64",
+      "committed": true,
+      "bytes": 3325156,
+      "sha256": "b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82",
+      "lib": "lib/libheif.a", "lib_sha256": "1e308363b99ff5ef69711ff9a4eea3d39c3eb590ba145656e73b22efeaa390b3"
+    },
+    {
+      "archive": "bundle_linux_arm64.zip",
+      "os": "linux", "env": "any", "arch": "aarch64",
+      "committed": false,
+      "bytes": 4011715,
+      "sha256": "bbc73ef9c5d049cac16e124df33d2117330d689bc6e3688108052418016a91cf",
+      "lib": "lib/libheif.a", "lib_sha256": "c7d346e31e98bfde0ffe16190b271159b884d9d3cb4761350d6be794c0158fa0"
+    },
+    {
+      "archive": "bundle_osx_x64.zip",
+      "os": "macos", "env": "any", "arch": "x86_64",
+      "committed": true,
+      "bytes": 3158467,
+      "sha256": "35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2",
+      "lib": "lib/libheif.a", "lib_sha256": "1d25b784dfc8bf256d365f73deff0071b201b4b71bc9e77b658db45443987992"
+    },
+    {
+      "archive": "bundle_osx_arm64.zip",
+      "os": "macos", "env": "any", "arch": "aarch64",
+      "committed": true,
+      "bytes": 3036209,
+      "sha256": "18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1",
+      "lib": "lib/libheif.a", "lib_sha256": "f3a403a2bbba2074a006fbf51c7374489c71a9317be4b377b711d58c71459481"
+    },
+    {
+      "archive": "bundle_windows_x64.zip",
+      "os": "windows", "env": "msvc", "arch": "x86_64",
+      "committed": true,
+      "bytes": 8910372,
+      "sha256": "5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed",
+      "lib": "lib/heif.lib", "lib_sha256": "0afbfa132069da692d185905bb736be00ae7e45a10a8d231fa7e0611001c500a"
+    },
+    {
+      "archive": "bundle_windows_arm64.zip",
+      "os": "windows", "env": "msvc", "arch": "aarch64",
+      "committed": false,
+      "bytes": 8254309,
+      "sha256": "2456725011c9b1b5666540ff12cedf33de1e39b819b7d2ef2a61ae1a2f9b7ad7",
+      "lib": "lib/heif.lib", "lib_sha256": "3684cf76b8ca74e304f730e68682bd62163248dc586c6a0d11c99a0c8f7a940e"
+    },
+    {
+      "archive": "bundle_mingw_x64.zip",
+      "os": "windows", "env": "gnu", "arch": "x86_64",
+      "committed": false,
+      "bytes": 4100236,
+      "sha256": "90ff4a315e3fac6e4b97fc0d4a1591d2240b2c21dda5df28a321674e18a5ce29",
+      "lib": "lib/libheif.a", "lib_sha256": "b0651f1d9a1048c2a6a64be7ee52a8478496043dfbd67250cbdb7db7d221b68d"
+    },
+    {
+      "archive": "bundle_mingw_arm64.zip",
+      "os": "windows", "env": "gnu", "arch": "aarch64",
+      "committed": false,
+      "bytes": 3137542,
+      "sha256": "c510a0d09d8e68fd41fe9a32bccb3ddbd9149e8d7f2de54cb448a8f168d1fcdf",
+      "lib": "lib/libheif.a", "lib_sha256": "232a0714f4cf3692fc65dcd1ce9b71438174fc2876a593d863206b479c7cd5ee"
+    }
+  ]
+}

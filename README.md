@@ -58,11 +58,14 @@ npm run tauri dev       # development window with hot reload
 npm run tauri build     # installers in src-tauri/target/release/bundle
 ```
 
-The first Rust build downloads prebuilt static libraries for **libheif,
-libde265 and x265** from
-[vegidio/binaries-heif](https://github.com/vegidio/binaries-heif) — an
-internet connection is needed once. For offline builds, download the archive
-for your target and set `HEIF_BINARIES_DIR=/path/to/extracted/libs`.
+The codec archives are pinned by a committed manifest
+(`src-tauri/vendor/heif-bundles/manifest.json`) and checksum-verified before
+extraction. Four ship in the repo — Linux x64, macOS x64, macOS arm64, and
+Windows x64 — so a clean checkout has the codec locally for every shipping
+target. The other four are hash-pinned and fetched on demand with
+`scripts/heif-artifacts.sh fetch <archive>`.
+`HEIF_BINARIES_DIR=/path/to/extracted` still overrides the artifact for a local
+or custom codec build.
 
 ### Windows and macOS
 

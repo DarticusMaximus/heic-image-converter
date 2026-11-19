@@ -16,10 +16,10 @@
 | Shell | Tauri v2 (2.12.6) |
 | Frontend | React 19.3.1 + TypeScript 6.0.3 + Vite 8.3.8 |
 | Backend | Rust 2024 edition |
-| Image decode | `image` 0.25.10 (JPEG/PNG/WebP/TIFF/BMP/GIF) and `heif-rs` 26.10.3 (HEIC/HEIF) |
-| Codec payload | statically linked libheif 1.23.6 + libde265 + x265, downloaded prebuilt at build time |
-| Test count | 42 Rust tests (plus 1 ignored manifest updater), 37 frontend tests (Vitest, 2 files) |
-| Source size | ~4,000 lines total (543 Rust conversion, 574 App, 1,124 CSS) |
+| Image decode | `image` 0.25.10 (JPEG/PNG/WebP/TIFF/BMP/GIF) and `heif-rs` 26.10.3 (HEIC/HEIF, exact pin, vendored and patched) |
+| Codec payload | statically linked libheif 1.23.6 + libde265 + x265, pinned by a committed manifest and checksum-verified before extraction |
+| Test count | 71 Rust tests (plus 1 ignored manifest updater), 37 frontend tests (Vitest, 2 files) |
+| Source size | ~7,900 lines total (538 Rust conversion, 547 App, 1,124 CSS) |
 
 ## Shape
 
@@ -42,17 +42,22 @@
  scan.rs         decode.rs       convert.rs          estimate.rs
  walk + probe    HEIC / image    resize + encode     sample encode
  + thumbnails    + EXIF orient   + path planning     + extrapolation
-                                     │
-                             formats.rs (settings,
-                             quality → codec params)
+                      │               │
+                      ▼               ▼
+             heic.rs (decode,     formats.rs (settings,
+             dimensions, encode,  quality → heic preset)
+             test-only probe)
 ```
+
+Every HEIC call — decode, dimension probe, encode, the test-only header probe
+— goes through `heic.rs`. It is the only module that names the HEIC crate.
 
 Everything runs in one process. There is no sidecar, no helper binary, no
 network call at runtime.
 
 ## Rust modules
 
-### `src-tauri/src/lib.rs` (137 lines)
+### `src-tauri/src/lib.rs` (147 lines)
 
 Owns the Tauri builder, plugins, and command surface.
 
@@ -68,7 +73,7 @@ Owns the Tauri builder, plugins, and command surface.
   revealed in the file manager.
 - Plugins: `tauri_plugin_opener`, `tauri_plugin_dialog`.
 
-### `src-tauri/src/formats.rs` (182 lines)
+### `src-tauri/src/formats.rs` (190 lines)
 
 The settings vocabulary and the friendly-to-codec mapping.
 
@@ -87,11 +92,13 @@ The settings vocabulary and the friendly-to-codec mapping.
 | High | 88 | 68 | medium |
 | Maximum | 95 | 82 | slow |
 
-HEIC is always 4:2:0, 8-bit output, RGB (alpha flattened onto white). PNG
-ignores quality entirely (lossless). `ConvertSettings::sanitized()` clamps
-`max_dimension < 16` to `None` and trims empty output paths.
+HEIC is always 4:2:0, 8-bit output, RGB (alpha flattened onto white). The HEIC
+preset column comes from `Quality::heic_preset()`, which returns the seam's
+`Preset` type. PNG ignores quality entirely (lossless).
+`ConvertSettings::sanitized()` clamps `max_dimension < 16` to `None` and trims
+empty output paths.
 
-### `src-tauri/src/scan.rs` (210 lines)
+### `src-tauri/src/scan.rs` (216 lines)
 
 Input expansion and list metadata.
 
@@ -107,9 +114,10 @@ Input expansion and list metadata.
 - Each accepted file records its canonical path, size, dimensions, plus the
   dropped folder (`root`) and the path relative to it (`relative`). Paths are
   deduplicated by canonical path.
-- Dimensions are probed in parallel with Rayon. For HEIC this loads the file
-  into memory for `HeifDecoder::new` (the crate drains the reader); for other
-  formats it reads headers only.
+- Dimensions are probed in parallel with Rayon through `decode::dimensions`.
+  For HEIC that calls `heic::dimensions`, which has to read the file because
+  the wrapper drains the reader, but skips the pixel decode; other formats read
+  headers only.
 - `thumbnail(path, max=128)` decodes, downscales (never upscales),
   composites alpha onto white, and returns a `data:image/jpeg;base64,...` at
   quality 74. Downscaling uses the triangle filter.
@@ -117,10 +125,11 @@ Input expansion and list metadata.
 Skipped files are returned with a reason only for explicitly dropped paths.
 Unsupported files discovered *inside* a folder are ignored silently.
 
-### `src-tauri/src/decode.rs` (124 lines)
+### `src-tauri/src/decode.rs` (117 lines)
 
-- HEIC: `heif::HeifDecoder` → `DynamicImage`. libheif applies container
-  transformations (`irot`/`imir`), which is verified by a committed fixture.
+- HEIC: `heic::decode` → `DynamicImage`, with its size probe served by
+  `heic::dimensions`. libheif applies container transformations (`irot`/`imir`),
+  which is verified by a committed fixture.
 - Everything else: `image::ImageReader::with_guessed_format().decode()`.
 - Non-HEIC images get EXIF orientation applied (2–8, including the mirrored
   cases). HEIC intentionally skips EXIF orientation to avoid double rotation.
@@ -128,7 +137,7 @@ Unsupported files discovered *inside* a folder are ignored silently.
   what conversion will produce.
 - `flatten_to_rgb()` alpha-composites onto white for JPEG/HEIC output.
 
-### `src-tauri/src/convert.rs` (543 lines)
+### `src-tauri/src/convert.rs` (538 lines)
 
 The pipeline and the only place files are written.
 
@@ -149,7 +158,58 @@ Encoders:
 - PNG: `image` PNG encoder, always normalized to 8-bit (`to_eight_bit`), alpha
   preserved, grayscale preserved.
 - JPEG: `JpegEncoder::new_with_quality`, RGB8 after flattening.
-- HEIC: `heif::HeifEncoder` with the quality/preset mapping above.
+- HEIC: `heic::encode` after alpha is flattened onto white; the seam owns the
+  quality/preset mapping, 4:2:0 chroma, and 8-bit output.
+
+### `src-tauri/src/heic.rs` (518 lines)
+
+The single adapter between this product and the HEIC crate. It is the only file
+under `src-tauri/src/` allowed to name the crate; `decode.rs`, `scan.rs`,
+`convert.rs`, `formats.rs`, and the test-only fixture corpus all call the seam
+instead. A test in this module walks the source tree and fails if another
+module reaches for `heif::` or imports with `use heif`.
+
+Contract:
+
+- `Preset { Fast, Medium, Slow }` — our vocabulary for the codec's speed/size
+  tradeoff. `formats::Quality::heic_preset()` produces it and `encode` maps it
+  onto the crate's enum, so no caller names the crate's preset.
+- `decode(path)` — decodes the primary image to a `DynamicImage`. Only the
+  primary image is decoded; auxiliary images (burst frames, thumbnails, depth
+  maps) are ignored. libheif applies container rotation (`irot`/`imir`), so the
+  seam never applies EXIF orientation.
+- `dimensions(path)` — reads the header only. The wrapper drains the reader, so
+  this costs one file read but no pixel decode. `scan.rs` probes every file
+  through `decode::dimensions`, which lands here for HEIC.
+- `encode(image, quality, preset)` — HEIC bytes at 4:2:0, 8-bit, non-lossless,
+  with the quality value and preset the caller passes.
+- `#[cfg(test)] probe(path)`, `ProbeInfo`, `BitDepth` — header facts for the
+  fixture corpus: dimensions plus the source depth (8, 10, or 12). Test-gated,
+  so a release build carries none of it.
+
+Failure taxonomy — `HeicError` and when each variant is raised:
+
+| Variant | Raised when |
+|---|---|
+| `CorruptContainer` | the container cannot be read or has no primary image handle |
+| `Decode` | the container parsed but pixel decoding failed |
+| `EncoderUnavailable` | libheif could not initialise an HEVC encoder |
+| `Encode` | any other encode failure |
+| `Panic { stage }` | a panic escaped the decoder (`"decoder"`) or encoder (`"encoder"`) |
+| `Io` | the file could not be read |
+
+`EncoderUnavailable` is decided by matching the crate's rendered
+`HeifError::EncoderInit` prefix (`encoder initialization failed`), so the
+classification is deliberately coupled to that message. A reworded dependency
+silently widens it to `Encode`, which a unit test catches on the bump.
+
+Panic containment lives here too: every entry point runs its work through a
+private `guard(stage, f)` built on `catch_unwind`, so an escaped libheif panic
+becomes `HeicError::Panic` instead of unwinding through a Rayon worker.
+`convert::convert_all` keeps its own `catch_unwind` as the backstop for
+non-HEIC decode panics and for writes. `HeicError` never leaves the Rust core:
+`decode.rs` renders it with `Display` into the `String` its callers already
+return.
 
 ### `src-tauri/src/estimate.rs` (165 lines)
 
@@ -183,7 +243,7 @@ Mid-batch cancellation timing is not tested here; only the pre-set flag path is.
 
 ## Frontend
 
-### `src/App.tsx` (574 lines)
+### `src/App.tsx` (547 lines)
 
 State: `files`, `settings`, `thumbs`, `phase` (`idle`/`converting`/`done`),
 `progress`, `estimate`, `summary`, `notice`, `scanning`, `dragging`.

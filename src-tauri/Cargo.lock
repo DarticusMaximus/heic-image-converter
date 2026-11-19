@@ -1791,11 +1791,11 @@ dependencies = [
 [[package]]
 name = "heif-rs"
 version = "26.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5863cecbc91f3b87a0cb508e864f76bafac4b772420ab26b5fa7219c939253"
 dependencies = [
  "bindgen",
  "image",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
  "ureq",
  "zip",

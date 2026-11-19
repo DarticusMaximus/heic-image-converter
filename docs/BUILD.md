@@ -24,26 +24,79 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
 Windows: WebView2 (present on current Windows 10/11), Visual Studio Build
 Tools with the C++ workload. macOS: Xcode command line tools.
 
-## The codec binary download
+## The codec artifact
 
-`heif-rs` fetches a prebuilt **static** archive from
-`github.com/vegidio/binaries-heif` during the first build and caches it under
-`OUT_DIR`. That means:
+The codec is a prebuilt **static** archive (libheif + libde265 + x265) per
+target, published as release `26.10.1` of
+`github.com/vegidio/binaries-heif`. The pin is
+`src-tauri/vendor/heif-bundles/manifest.json`: it records all eight target
+archives with the archive's byte length and SHA-256, plus the SHA-256 of the
+static library inside each one. The manifest is hand-authored; no script
+rewrites it.
 
-- The first `cargo build` needs internet access.
-- CI runners re-download unless the Rust cache covers `OUT_DIR`; our cache
-  configuration caches the target directory, which is enough in practice.
-- Offline builds: download the matching `bundle_<os>_<arch>.zip`, extract it,
-  and point `HEIF_BINARIES_DIR` at the directory containing `include/` and
-  `lib/`:
+`heif-rs` itself is vendored at `src-tauri/vendor/heif-rs/` and wired in with
+`[patch.crates-io]`. Upstream's build script downloads and extracts the archive
+with no checksum, and it runs before our own `build.rs`, so patching the crate is
+the only place the check can sit where a plain `cargo build` cannot step around
+it. `VENDORED.md` records the delta from the published 26.10.3 source. The crate
+requirement is exact (`"=26.10.3"`), so the wrapper cannot resolve to another
+version.
+
+What gets verified:
+
+- **Before extraction** — the archive's SHA-256 against the manifest row. A
+  mismatch fails the build with the archive name, both hashes, and the
+  `scripts/heif-artifacts.sh fetch` command that re-fetches it.
+- **Every time the codec build script runs** — the extracted `lib/libheif.a`
+  (`lib/heif.lib` on MSVC) is hashed against the manifest's `lib_sha256`, so a
+  stale or poisoned cache directory fails instead of being linked. Once cargo
+  caches the script's result it does not re-run; `scripts/heif-artifacts.sh
+  verify` is the on-demand re-check.
+
+Four archives are committed in the repository — the targets this product ships
+and CI builds: Linux x64, macOS x64, macOS arm64, and Windows x64 (about 18 MB
+total). For those, the build resolves the archive from
+`src-tauri/vendor/heif-bundles/` and never reaches for the network. The other
+four (`linux_arm64`, `windows_arm64`, and the two MinGW targets) are hash-pinned
+but not committed: the build downloads one from the pinned release on first use
+and verifies it before extracting. MSVC targets use the `windows` archive; GNU
+targets use `mingw`.
+
+Two subcommands re-check the pin by hand:
+
+```bash
+scripts/heif-artifacts.sh verify
+scripts/heif-artifacts.sh fetch bundle_linux_arm64.zip
+```
+
+`verify` checks each committed archive's byte length and SHA-256, then every
+library already extracted under
+`src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/` against the
+manifest. Libraries are matched by hash, because the cache directory is named
+for the codec release and not the target — Linux x64 and arm64 both ship
+`lib/libheif.a`. A bundle directory that exists but holds none of the manifest's
+libraries is a half-extracted cache and fails; only the complete absence of
+bundle directories is a cold-cache pass. `verify` exits 1 on any mismatch,
+printing expected and actual values plus a `fix:` line.
+`fetch <archive>` downloads one archive from the pinned release into
+`src-tauri/vendor/heif-bundles/` and keeps it only if its byte length and SHA-256
+match; a bad download is deleted and the script exits 1. Neither subcommand
+writes the manifest.
+
+`HEIF_BINARIES_DIR` remains the documented local/custom-build override: point it
+at a directory containing `include/` and `lib/`, and the build uses it as-is,
+skipping the manifest. That directory sits outside the pin — the build checks
+only that `include/` and `lib/` exist, and hashes nothing under it — so point the
+override only at a codec build you trust.
 
 ```bash
 HEIF_BINARIES_DIR=/path/to/extracted cargo build --release
 ```
 
-Platform archive names: `bundle_linux_x64`, `bundle_osx_arm64`,
-`bundle_windows_x64`, `bundle_mingw_x64`, plus arm64 variants. MSVC targets use
-the `windows` archive; GNU targets use `mingw`.
+The Rust and build gates in `scripts/ci.sh` pass `--locked`
+(`cargo test --locked`, and `npm run tauri -- build --no-bundle -- --locked`),
+so CI resolves only what `Cargo.lock` already records: a requirement change that
+would shift the lockfile fails the gate instead of re-resolving.
 
 ## Develop
 
@@ -71,14 +124,14 @@ cd src-tauri && cargo test
 ```
 
 Rust tests cover the conversion core, path planning, rotation, 8-bit PNG
-normalization, and estimate math. They create real HEIC/JPEG/PNG files in
-temporary directories. A headless backend integration suite covers folder
-scanning (recursion, hidden and system entries, dedupe, the 20,000-file cap,
-mixed roots), thumbnail generation, batch conversion with mirrored output,
-cancellation through the pre-set flag, and per-file failure isolation — no
-window, network, or external tool involved. A corpus integrity suite also
-replays the committed images in `src-tauri/tests/fixtures/` against their
-manifest.
+normalization, estimate math, and the pinned codec manifest. They create real
+HEIC/JPEG/PNG files in temporary directories. A headless backend integration
+suite covers folder scanning (recursion, hidden and system entries, dedupe, the
+20,000-file cap, mixed roots), thumbnail generation, batch conversion with
+mirrored output, cancellation through the pre-set flag, and per-file failure
+isolation — no window, network, or external tool involved. A corpus integrity
+suite also replays the committed images in `src-tauri/tests/fixtures/` against
+their manifest.
 
 Frontend tests cover the pure logic in `src/format.ts` and `src/rows.ts`: byte
 formatting, target-pixel math, settings load/save/validation, and the
@@ -102,8 +155,8 @@ resolves the repository root from its own path, so it runs from any directory:
 
 ```bash
 scripts/ci.sh frontend   # npm test, then npm run build
-scripts/ci.sh rust       # cargo fmt --check, then cargo test (in src-tauri)
-scripts/ci.sh build      # npm run tauri -- build --no-bundle
+scripts/ci.sh rust       # cargo fmt --check, then cargo test --locked (in src-tauri)
+scripts/ci.sh build      # npm run tauri -- build --no-bundle -- --locked
 scripts/ci.sh all        # frontend, then rust, then build; stops at the first failure
 ```
 
@@ -115,11 +168,12 @@ Three gates, one CI job each:
 
 - **Frontend** — `npm test`, then `npm run build`. A failing expectation fails
   the test half; a `tsc` error fails the build half.
-- **Rust** — `cargo fmt --check`, then `cargo test`, both with `src-tauri` as
-  the working directory. Formatting is a gate.
-- **Release build** — `npm run tauri -- build --no-bundle`. The binary compiles
-  in release mode; `--no-bundle` means no `.deb`, `.rpm`, or AppImage is
-  produced, which keeps the gate to the compile it is meant to prove.
+- **Rust** — `cargo fmt --check`, then `cargo test --locked`, both with
+  `src-tauri` as the working directory. Formatting is a gate.
+- **Release build** — `npm run tauri -- build --no-bundle -- --locked`. The
+  binary compiles in release mode; `--no-bundle` means no `.deb`, `.rpm`, or
+  AppImage is produced, which keeps the gate to the compile it is meant to
+  prove.
 
 `cargo clippy` is not a gate. `cargo clippy --all-targets` currently reports 5
 pre-existing warnings in the backend (4 `collapsible_if` in `convert.rs`, 1
@@ -230,9 +284,9 @@ signing). Use the GitHub Actions workflow:
 - `.github/workflows/ci.yml` — three independent jobs on `ubuntu-24.04` with no
   `needs` between them, so one failure does not hide the others: `frontend`
   (unit tests and production build), `rust` (`cargo fmt --check` and
-  `cargo test`), and `build` (release build with `--no-bundle`). Each job
-  installs its own dependencies and delegates to `./scripts/ci.sh <gate>`;
-  timeouts are 10, 40, and 60 minutes.
+  `cargo test --locked`), and `build` (release build with `--no-bundle` and
+  `--locked`). Each job installs its own dependencies and delegates to
+  `./scripts/ci.sh <gate>`; timeouts are 10, 40, and 60 minutes.
 - `.github/workflows/release.yml` — triggered by a `v*` tag or manually.
   Matrix: Ubuntu 24.04, Windows latest, macOS arm64, macOS x64. Uses
   `tauri-apps/tauri-action` to create a draft release with installers.
@@ -252,7 +306,7 @@ warnings until it is.
 
 | Component | Version | Why it matters |
 |---|---|---|
-| `heif-rs` | 26.10.3 | HEIC encode/decode, prebuilt binaries, young crate |
+| `heif-rs` | 26.10.3 (exact, `=26.10.3`) | HEIC encode/decode, young crate; vendored and patched so the codec artifact is checksum-pinned |
 | libheif (bundled) | 1.23.6 | reported by `heif::libheif_version()` |
 | `image` | 0.25.10 | all non-HEIC codecs |
 | `tauri` | 2.12.6 | shell, capabilities, CSP |
@@ -267,7 +321,8 @@ warnings until it is.
 | Symptom | Likely cause |
 |---|---|
 | Blank window in dev, CSP errors in console | CSP is missing the dev localhost origins |
-| `heif-rs` build fails downloading | No network; use `HEIF_BINARIES_DIR` |
+| `heif-rs` fails with a checksum mismatch | A committed archive or an extracted library does not match `manifest.json`; run `scripts/heif-artifacts.sh verify` and follow its `fix:` line |
+| `heif-rs: no pinned codec artifact for target …` | The target is not one of the eight in the manifest; `HEIF_BINARIES_DIR` is the escape hatch |
 | `webkit2gtk-4.1` not found | Install the Tauri system dependencies |
 | HEIC encode fails with an encoder error | x265 build mismatch; the bundled binary is 8-bit only |
 | App opens, conversions do nothing | Check the WebView console; command errors surface as toasts |
@@ -285,9 +340,12 @@ warnings until it is.
 │   ├── icons/            generated app icons
 │   ├── src/              Rust backend
 │   ├── tests/fixtures/   22 synthetic fixtures, manifest.json, README.md, generate.sh
+│   ├── vendor/heif-rs/   vendored, patched codec wrapper
+│   ├── vendor/heif-bundles/  pinned codec manifest + 4 committed archives
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── scripts/ci.sh         gate runner shared by local runs and CI
+├── scripts/heif-artifacts.sh  verify/fetch the pinned codec artifacts
 ├── .github/workflows/    CI + release
 ├── LICENSE               GPL-3.0
 └── README.md

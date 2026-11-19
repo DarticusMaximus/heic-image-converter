@@ -2,10 +2,13 @@ mod convert;
 mod decode;
 mod estimate;
 mod formats;
+mod heic;
 mod scan;
 
 #[cfg(test)]
 mod backend_integration;
+#[cfg(test)]
+mod codec_artifacts;
 #[cfg(test)]
 mod fixture_corpus;
 

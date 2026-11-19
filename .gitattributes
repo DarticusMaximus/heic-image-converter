@@ -9,3 +9,7 @@ src-tauri/tests/fixtures/*.tif binary
 src-tauri/tests/fixtures/*.tiff binary
 src-tauri/tests/fixtures/*.bmp binary
 src-tauri/tests/fixtures/*.heic binary
+
+# Committed codec archives are release binaries: never convert line endings or
+# merge them. The manifest and provenance docs are text and stay diffable.
+src-tauri/vendor/heif-bundles/*.zip binary

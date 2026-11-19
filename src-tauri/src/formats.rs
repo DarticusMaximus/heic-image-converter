@@ -103,11 +103,11 @@ impl Quality {
 
     /// x265 speed preset. Quality presets also trade encode time for bytes:
     /// chasing the last few percent is not worth a 10x slower batch.
-    pub fn heic_preset(self) -> heif::Preset {
+    pub fn heic_preset(self) -> crate::heic::Preset {
         match self {
-            Self::Smallest | Self::Balanced => heif::Preset::Fast,
-            Self::High => heif::Preset::Medium,
-            Self::Maximum => heif::Preset::Slow,
+            Self::Smallest | Self::Balanced => crate::heic::Preset::Fast,
+            Self::High => crate::heic::Preset::Medium,
+            Self::Maximum => crate::heic::Preset::Slow,
         }
     }
 }
@@ -178,5 +178,13 @@ mod tests {
             assert!(pair[1].jpeg() > pair[0].jpeg());
             assert!(pair[1].heic() > pair[0].heic());
         }
+    }
+
+    #[test]
+    fn quality_maps_to_heic_presets() {
+        assert_eq!(Quality::Smallest.heic_preset(), crate::heic::Preset::Fast);
+        assert_eq!(Quality::Balanced.heic_preset(), crate::heic::Preset::Fast);
+        assert_eq!(Quality::High.heic_preset(), crate::heic::Preset::Medium);
+        assert_eq!(Quality::Maximum.heic_preset(), crate::heic::Preset::Slow);
     }
 }

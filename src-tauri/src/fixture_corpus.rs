@@ -202,8 +202,8 @@ pub fn color_debug_name(color: image::ColorType) -> String {
 }
 
 /// 16-bit color types imply a per-channel depth of 16; everything else is 8.
-/// HEIC is checked with `heif::probe` instead, because a 10- or 12-bit HEIC
-/// decodes into a 16-bit `image` color type.
+/// HEIC is checked with the seam's `heic::probe` instead, because a 10- or
+/// 12-bit HEIC decodes into a 16-bit `image` color type.
 pub fn color_derived_bit_depth(color: image::ColorType) -> u8 {
     use image::ColorType::*;
     match color {
@@ -212,14 +212,9 @@ pub fn color_derived_bit_depth(color: image::ColorType) -> u8 {
     }
 }
 
-/// Map `heif::probe`'s bit depth onto the manifest's per-channel depth.
-pub fn heif_bit_depth(depth: heif::BitDepth) -> u8 {
-    match depth {
-        heif::BitDepth::Eight => 8,
-        heif::BitDepth::Ten => 10,
-        heif::BitDepth::Twelve => 12,
-        _ => 0,
-    }
+/// Map the seam's bit depth onto the manifest's per-channel depth.
+pub fn seam_bit_depth(depth: crate::heic::BitDepth) -> u8 {
+    depth.as_u8()
 }
 
 /// Sample the four corners of an RGBA8 buffer at top-left, top-right,
@@ -624,16 +619,13 @@ fn decoded_fixtures_match_recorded_facts() {
         }
 
         // `bit_depth` is the source depth, which a decoded colour type cannot
-        // express for 10/12-bit HEIC. HEIC is probed; every other format is
-        // derived from the decoded colour type, which was just asserted equal
-        // to `decoded.color`.
+        // express for 10/12-bit HEIC. HEIC is probed through the seam; every
+        // other format is derived from the decoded colour type, which was just
+        // asserted equal to `decoded.color`.
         let (measured_depth, rule) = if kind.is_heic() {
-            let data = std::fs::read(&path).unwrap_or_else(|err| {
-                panic!("{}: could not read for heif::probe: {err}", fixture.file)
-            });
-            let info = heif::probe(&data)
-                .unwrap_or_else(|err| panic!("{}: heif::probe failed: {err}", fixture.file));
-            (heif_bit_depth(info.bit_depth), "heif::probe")
+            let info = crate::heic::probe(&path)
+                .unwrap_or_else(|err| panic!("{}: heic::probe failed: {err}", fixture.file));
+            (seam_bit_depth(info.bit_depth), "heic::probe")
         } else {
             (color_derived_bit_depth(image.color()), "decoded color type")
         };

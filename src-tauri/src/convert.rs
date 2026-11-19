@@ -227,16 +227,15 @@ fn encode(image: DynamicImage, settings: &ConvertSettings) -> Result<Vec<u8>, St
                 .map_err(|e| format!("JPEG encode failed: {e}"))?;
         }
         OutputFormat::Heic => {
+            // HEIC has no alpha channel, so transparent pixels are composited
+            // onto white before the seam sees them — same pixels as before.
             let rgb = DynamicImage::ImageRgb8(flatten_to_rgb(&image));
-            let config = heif::EncoderConfig {
-                quality: settings.quality.heic(),
-                preset: settings.quality.heic_preset(),
-                chroma: heif::Chroma::Yuv420,
-                ..Default::default()
-            };
-            let encoder = heif::HeifEncoder::new_with_config(&mut buf, config);
-            rgb.write_with_encoder(encoder)
-                .map_err(|e| format!("HEIC encode failed: {e}"))?;
+            buf = crate::heic::encode(
+                &rgb,
+                settings.quality.heic(),
+                settings.quality.heic_preset(),
+            )
+            .map_err(|err| err.to_string())?;
         }
     }
     Ok(buf)

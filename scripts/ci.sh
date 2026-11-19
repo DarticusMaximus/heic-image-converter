@@ -7,8 +7,8 @@ Usage: scripts/ci.sh <subcommand>
 
 Subcommands:
   frontend  Run the frontend tests (npm test) and frontend build (npm run build)
-  rust      Run Rust formatting checks (cargo fmt --check) and tests (cargo test)
-  build     Run the Tauri release build without bundling
+  rust      Run Rust formatting checks (cargo fmt --check) and tests (cargo test --locked)
+  build     Run the Tauri release build without bundling, passing --locked to cargo
   all       Run frontend, then rust, then build; stop at the first failure
 
 Options:
@@ -33,12 +33,12 @@ rust() {
   echo "==> Rust formatting"
   ( cd src-tauri && cargo fmt --check )
   echo "==> Rust tests"
-  ( cd src-tauri && cargo test )
+  ( cd src-tauri && cargo test --locked )
 }
 
 build() {
   echo "==> Tauri release build (no bundle)"
-  npm run tauri -- build --no-bundle
+  npm run tauri -- build --no-bundle -- --locked
 }
 
 case "${1-}" in

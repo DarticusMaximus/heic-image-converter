@@ -21,7 +21,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-heif-rs = "26.10.3"
+heif-rs = "=26.10.3"
 image = { version = "0.25", default-features = false, features = [
   "png",
   "jpeg",
@@ -34,6 +34,12 @@ rayon = "1"
 walkdir = "2"
 base64 = "0.22"
 kamadak-exif = "0.6"
+
+# The HEIC wrapper is consumed from the vendored fork, never from crates.io: its
+# build script is replaced so the codec artifact is resolved from the committed
+# manifest and checksum-verified. See src-tauri/vendor/heif-rs/VENDORED.md.
+[patch.crates-io]
+heif-rs = { path = "vendor/heif-rs" }
 
 # Release profile tuned for a small, fast binary. `panic = "abort"` is
 # deliberately not set: a single decoder panic is caught per-file so one bad

@@ -1,7 +1,6 @@
 //! Decoding for every supported input, including EXIF orientation.
 
 use crate::formats::InputKind;
-use image::ImageDecoder;
 use image::{DynamicImage, Rgb, RgbImage};
 use std::fs::File;
 use std::io::BufReader;
@@ -12,11 +11,7 @@ use std::path::Path;
 /// and libheif already applies it, so applying EXIF again would double-rotate.
 pub fn load(path: &Path, kind: InputKind) -> Result<DynamicImage, String> {
     let mut img = if kind.is_heic() {
-        let file = File::open(path).map_err(|e| format!("could not open file: {e}"))?;
-        let reader = BufReader::new(file);
-        let decoder =
-            heif::HeifDecoder::new(reader).map_err(|e| format!("HEIC decode failed: {e}"))?;
-        DynamicImage::from_decoder(decoder).map_err(|e| format!("HEIC decode failed: {e}"))?
+        crate::heic::decode(path).map_err(|err| err.to_string())?
     } else {
         let reader = image::ImageReader::open(path)
             .map_err(|e| format!("could not open file: {e}"))?
@@ -36,11 +31,9 @@ pub fn load(path: &Path, kind: InputKind) -> Result<DynamicImage, String> {
 /// Read only the dimensions, without decoding pixels where the format allows it.
 pub fn dimensions(path: &Path, kind: InputKind) -> Option<(u32, u32)> {
     if kind.is_heic() {
-        // libheif's Rust wrapper drains the reader before parsing the header,
+        // The seam reads the header only; libheif's wrapper drains the reader,
         // so this costs a file read but skips the pixel decode.
-        let data = std::fs::read(path).ok()?;
-        let decoder = heif::HeifDecoder::new(std::io::Cursor::new(data)).ok()?;
-        Some(decoder.dimensions())
+        crate::heic::dimensions(path).ok()
     } else {
         let (width, height) = image::ImageReader::open(path)
             .ok()?
