@@ -126,5 +126,14 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      # The cache key follows Cargo.lock, so a lockfile change buys a cold
+      # $CARGO_HOME with no registry index, and `cargo test --locked` cannot
+      # resolve a single crate (run 44587086777 failed exactly there). This step
+      # only prepares $CARGO_HOME before the sandbox exists; the gate still runs
+      # inside `unshare -rn` with CARGO_NET_OFFLINE=true and still builds only
+      # what Cargo.lock already records.
+      - name: Warm the cargo registry cache
+        run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+
       - name: Offline gate
         run: ./scripts/ci.sh offline

@@ -403,11 +403,20 @@ signing). Use the GitHub Actions workflow:
   `kernel.apparmor_restrict_unprivileged_userns` with
   `sudo sysctl -w …=0 || true` and sets `kernel.unprivileged_userns_clone=1`
   the same way, probes `unshare -rn true` — failing with
-  `offline job: no usable network namespace; the gate cannot certify` — then
-  runs `./scripts/ci.sh offline`. The trust gate therefore runs on every pull
-  request in two jobs; the offline property is proven off pull requests only.
-  The four-job wiring is committed, but a hosted run of it has not yet been
-  observed; the evidence README records that until it is.
+  `offline job: no usable network namespace; the gate cannot certify` — warms
+  the cargo registry with
+  `cargo fetch --locked --manifest-path src-tauri/Cargo.toml`, then runs
+  `./scripts/ci.sh offline`. The warm step exists because
+  `Swatinem/rust-cache` keys its cache on `Cargo.lock`: a lockfile change means
+  a cold `$CARGO_HOME` with no registry index, and `cargo test --locked` under
+  `CARGO_NET_OFFLINE=true` cannot resolve a single crate. The fetch runs outside
+  the sandbox and only fills `$CARGO_HOME` with what the lock already records;
+  the gate still builds with no network. The trust gate therefore runs on every
+  pull request in two jobs; the offline property is proven off pull requests
+  only. A hosted run of the four jobs was observed on 2026-11-19 (run
+  44587086777): `frontend`, `rust` and `build` passed; `offline` failed on the
+  cold registry cache, before any compile, which the warm step fixes. The rerun
+  is pending, and the evidence README records the failure and the fix.
 - `.github/workflows/release.yml` — triggered by a `v*` tag or manually.
   Matrix: Ubuntu 24.04, Windows latest, macOS arm64, macOS x64. Uses
   `tauri-apps/tauri-action` to create a draft release with installers.

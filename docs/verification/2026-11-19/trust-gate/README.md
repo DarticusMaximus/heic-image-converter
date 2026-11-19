@@ -101,22 +101,64 @@ deliberately not committed; the commands above reproduce them.
 
 ## Hosted run
 
-**Pending push.** The push to `main` triggers `.github/workflows/ci.yml`, which
-runs four jobs: `Frontend`, `Rust`, and `Release build` on every change, and
-`Offline build` on every event that is not a pull request. The run has not
-happened yet — this evidence was committed locally and not pushed — so no
-result, URL, or duration is claimed. The fields below are to be filled from the
-run page once the push lands:
+Observed on GitHub Actions: run [`44587086777`][run] at
+`2752b74317d6cc3be906d6d0af474d30c7d3eeeb` (`2752b74`), 2026-11-19 — the child
+of `d055f24` that committed the local-gate evidence. Times are UTC; durations
+are the job start/finish stamps from the run page.
 
-- Run URL: pending push
-- Triggering commit: pending push (expected to be the commit that lands this
-  evidence, a child of `d055f24`)
-- Jobs and results: pending push (`Frontend`, `Rust`, `Release build`,
-  `Offline build`)
-- Durations: pending push
+[run]: https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44587086777
 
-The local runs above are the reference the hosted run gets checked against: same
-gates, same order, same `trust gate: PASS` and `offline gate: PASS` lines.
+| Job | Result | Window (UTC) | Duration |
+| --- | --- | --- | --- |
+| `Frontend` | success | 18:22:25 → 18:22:38 | 13 s |
+| `Rust` (trust gate, then rust gate) | success | 18:22:25 → 18:23:48 | 1 m 23 s |
+| `Release build` (trust gate, then build) | success | 18:22:26 → 18:25:05 | 2 m 39 s |
+| `Offline build` | **failure** | 18:22:26 → 18:38:14 | 15 m 48 s |
+
+Three of the four jobs passed, both trust-gate jobs among them. `Offline build`
+failed in its `Offline gate` step at 18:38:12 with:
+
+```
+error: no matching package named `base64` found
+location searched: crates.io index
+required by package `heic-image-converter v0.1.0 (/tmp/offline-gate.Ni1Q6y/repo/src-tauri)`
+offline gate: FAIL (exit 1)
+```
+
+The isolation half of the gate did its job: the step printed
+`offline gate: isolation: unshare -rn` and `offline gate: sandbox verified
+unreachable (positive control)`, on a clone at `offline gate: HEAD
+2752b743…`. The failure came before a single compile, and it was a resolution
+failure, not a build one: `cargo test --locked` had no registry index to search.
+`Swatinem/rust-cache` keys its cache on `Cargo.lock`, and the lock changed at
+`962fbd7` (the `heif-rs` entry: `source` and `checksum` removed because the
+package became a vendored path dependency, and `serde_json`/`sha2` added to its
+dependencies). The `offline` job therefore restored a cold `$CARGO_HOME` with no
+registry; the `rust` and `build` jobs were unaffected because they may use the
+network. Local runs of the same gate pass because the developer's `~/.cargo` is
+already populated. No build, formatting, or codec-artifact problem was reached.
+
+Most of the 15 m 48 s is the job's `Install Linux dependencies` step
+(18:22:35 → 18:38:02), not the gate: `Offline gate` ran for four seconds and
+failed the way it should — loudly, with a non-zero exit.
+
+**Fix, in this change set; rerun pending the push that lands it.** The `offline`
+job now runs
+`cargo fetch --locked --manifest-path src-tauri/Cargo.toml` right after the cache
+restore and immediately before the gate step, so `$CARGO_HOME` holds the locked
+dependency set before the sandbox goes up. Nothing about the gate changed: same
+`scripts/ci.sh offline`, same `unshare -rn`, same `CARGO_NET_OFFLINE=true`, same
+probe, same frozen archive count. The fetch runs outside the namespace and only
+adds what `Cargo.lock` already records, so it does not widen what the sandbox can
+reach. It does make one precondition explicit that the cache restore left
+implicit: the gate proves a network-free build *given* a populated `$CARGO_HOME`,
+not a build from a bare machine — true of the rust-cache path as well.
+
+Pending until the next push:
+
+- Rerun URL: pending push
+- Rerun results: pending push (all four jobs, `Offline build` included, must pass)
+- Rerun durations: pending push
 
 ## Boundary
 
