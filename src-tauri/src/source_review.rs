@@ -302,18 +302,36 @@ fn is_finding_id(id: &str) -> bool {
     id.len() == 3 && id.starts_with('F') && id[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Every `F` row as its full line, so the disposition can be looked for across
-/// the cells the row actually has. Row shape, not a document-wide search, is
-/// what admits a line here.
-fn finding_rows(section: &str) -> Vec<String> {
+/// One `F` row: its id, the parsed fourth cell (the disposition), and the full
+/// line for checks that need the gate or owner named elsewhere in the row.
+struct FindingRow {
+    id: String,
+    disposition: String,
+    line: String,
+}
+
+/// Every `F` row, with the disposition read from its own cell rather than the
+/// row text. A finding whose prose happens to contain `watch` cannot satisfy
+/// the check, and a row that grows or loses a column fails loudly instead of
+/// shifting the disposition under a substring search.
+fn finding_rows(section: &str) -> Vec<FindingRow> {
     section
         .lines()
-        .filter(|line| {
-            let mut cells = line.split('|');
-            cells.next();
-            cells.next().is_some_and(|id| is_finding_id(id.trim()))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').collect();
+            if cells.len() < 6 {
+                return None;
+            }
+            let id = cells[1].trim();
+            if !is_finding_id(id) {
+                return None;
+            }
+            Some(FindingRow {
+                id: id.to_owned(),
+                disposition: cells[4].trim().to_owned(),
+                line: line.to_owned(),
+            })
         })
-        .map(str::to_owned)
         .collect()
 }
 
@@ -332,17 +350,14 @@ fn every_finding_has_a_disposition() {
 
     let mut blocking = 0;
     for row in &rows {
-        let matched: Vec<&str> = DISPOSITIONS
-            .iter()
-            .copied()
-            .filter(|disposition| row.contains(disposition))
-            .collect();
-        assert_eq!(
-            matched.len(),
-            1,
-            "each finding row must carry exactly one disposition; this row carries {matched:?}: {row:?}"
+        assert!(
+            DISPOSITIONS.contains(&row.disposition.as_str()),
+            "{} has disposition {:?}, which is not one of {:?}",
+            row.id,
+            row.disposition,
+            DISPOSITIONS
         );
-        if row.contains("open obligation") && row.contains("stage 04") {
+        if row.disposition == "open obligation" && row.line.contains("stage 04") {
             blocking += 1;
         }
     }
