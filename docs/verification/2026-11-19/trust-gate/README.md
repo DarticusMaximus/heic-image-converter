@@ -101,12 +101,61 @@ deliberately not committed; the commands above reproduce them.
 
 ## Hosted run
 
-Observed on GitHub Actions: run [`44587086777`][run] at
+Two runs are recorded. The first exposed a real defect in the offline job's
+dependency handling; the second, at the commit that carries the fix, is green on
+all four jobs and is the code state this evidence describes.
+
+### Run 44591752926 — success
+
+Observed on GitHub Actions: run [`44591752926`][run-44591752926] at
+`c06fceae34153320f5e5589d2c9bd74941ba2fa7` (`c06fcea`, "Warm the offline job's
+registry cache and record the first hosted run"), 2026-11-19, conclusion
+`success`. Times are UTC; durations are the job start/finish stamps from the run
+page.
+
+[run-44591752926]: https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44591752926
+
+| Job | Result | Window (UTC) | Duration |
+| --- | --- | --- | --- |
+| `Frontend` | success | 18:48:54 → 18:49:06 | 12 s |
+| `Rust` (trust gate, then rust gate) | success | 18:48:55 → 18:55:17 | 6 m 22 s |
+| `Release build` (trust gate, then build) | success | 18:48:55 → 18:57:58 | 9 m 3 s |
+| `Offline build` | success | 18:48:54 → 18:52:06 | 3 m 12 s |
+
+The `offline` job's steps cost what the cache work predicted: `Install Linux
+dependencies` 24 s, `Lift the user-namespace restriction` 0 s, `Probe the
+network namespace` 0 s, `Swatinem/rust-cache@v2` 1 s, `Warm the cargo registry
+cache` 4 s (`cargo fetch --locked`, exit 0), then `Offline gate` 2 m 32 s. The
+gate itself printed:
+
+```
+offline gate: work dir: /tmp (83 GiB free)
+offline gate: clone: /tmp/offline-gate.CnI0Cf/repo
+offline gate: HEAD c06fceae34153320f5e5589d2c9bd74941ba2fa7
+offline gate: isolation: unshare -rn
+offline gate: sandbox verified unreachable (positive control)
+test result: ok. 87 passed; 0 failed; 1 ignored
+offline gate: PASS (HEAD c06fceae34153320f5e5589d2c9bd74941ba2fa7, isolation: unshare -rn)
+```
+
+Both trust-gate jobs passed their step too, logging
+`heif-artifacts: verified 4 committed archives, 0 extracted libraries` and
+`trust gate: PASS`. The zero extracted libraries is the cold-cache pass: a
+hosted runner starts with an empty `target/`, so there is no build output to
+hash, and the four committed archives are still verified byte for byte.
+
+This run is the code state the evidence describes. The commit that later lands
+this text is bookkeeping — it carries this README and no behaviour — and its own
+run is not separately recorded.
+
+### The earlier run, 44587086777 — offline failure
+
+Observed on GitHub Actions: run [`44587086777`][run-44587086777] at
 `2752b74317d6cc3be906d6d0af474d30c7d3eeeb` (`2752b74`), 2026-11-19 — the child
 of `d055f24` that committed the local-gate evidence. Times are UTC; durations
 are the job start/finish stamps from the run page.
 
-[run]: https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44587086777
+[run-44587086777]: https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44587086777
 
 | Job | Result | Window (UTC) | Duration |
 | --- | --- | --- | --- |
@@ -142,23 +191,17 @@ Most of the 15 m 48 s is the job's `Install Linux dependencies` step
 (18:22:35 → 18:38:02), not the gate: `Offline gate` ran for four seconds and
 failed the way it should — loudly, with a non-zero exit.
 
-**Fix, in this change set; rerun pending the push that lands it.** The `offline`
-job now runs
+**The fix.** The `offline` job runs
 `cargo fetch --locked --manifest-path src-tauri/Cargo.toml` right after the cache
 restore and immediately before the gate step, so `$CARGO_HOME` holds the locked
-dependency set before the sandbox goes up. Nothing about the gate changed: same
-`scripts/ci.sh offline`, same `unshare -rn`, same `CARGO_NET_OFFLINE=true`, same
-probe, same frozen archive count. The fetch runs outside the namespace and only
-adds what `Cargo.lock` already records, so it does not widen what the sandbox can
-reach. It does make one precondition explicit that the cache restore left
-implicit: the gate proves a network-free build *given* a populated `$CARGO_HOME`,
-not a build from a bare machine — true of the rust-cache path as well.
-
-Pending until the next push:
-
-- Rerun URL: pending push
-- Rerun results: pending push (all four jobs, `Offline build` included, must pass)
-- Rerun durations: pending push
+dependency set before the sandbox goes up; the rerun above exercised it in 4 s
+with exit 0. Nothing about the gate changed: same `scripts/ci.sh offline`, same
+`unshare -rn`, same `CARGO_NET_OFFLINE=true`, same probe, same frozen archive
+count. The fetch runs outside the namespace and only adds what `Cargo.lock`
+already records, so it does not widen what the sandbox can reach. It does make
+one precondition explicit that the cache restore left implicit: the gate proves
+a network-free build *given* a populated `$CARGO_HOME`, not a build from a bare
+machine — true of the rust-cache path as well.
 
 ## Boundary
 
