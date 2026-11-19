@@ -53,13 +53,41 @@ unzip -p src-tauri/vendor/heif-bundles/bundle_linux_x64.zip \
   lib/libheif.a | strings | grep -E '^1\.23\.[0-9]+$' | sort -u
 ```
 
-Observed: 32 members — a header tree under `include/libheif/`, one static
-library `lib/libheif.a` of 12,953,188 bytes, and no license or notice file. The
-archive's SHA-256 is
+Observed: 32 members — 28 headers under `include/libheif/`, one static library
+`lib/libheif.a` of 12,953,188 bytes, and three directory entries — and no
+license or notice file. The archive's SHA-256 is
 `b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82`, equal to
 the `bundle_linux_x64.zip` row in
 `src-tauri/vendor/heif-bundles/manifest.json` (3,325,156 bytes). The version
 header says `1.23.6` and the library carries the same bare string.
+
+What the bytes prove about provenance is narrower than the version number. The
+symbol names, the notice-file count, and the version banners come from:
+
+```bash
+unzip -Z1 src-tauri/vendor/heif-bundles/bundle_linux_x64.zip \
+  | grep -icE 'license|copying|notice'
+unzip -p src-tauri/vendor/heif-bundles/bundle_linux_x64.zip lib/libheif.a \
+  > /tmp/libheif.a
+nm /tmp/libheif.a | grep -c ' T heifrs_'
+nm /tmp/libheif.a | grep -cE ' T heif_[a-z]'
+nm /tmp/libheif.a | grep -c ' T de265_'
+nm /tmp/libheif.a | grep -c ' T x265_'
+ar x /tmp/libheif.a de265.cc.o version.cpp.o
+strings -a de265.cc.o | grep -m1 -E '^1\.1\.3$'
+strings -a version.cpp.o | grep -E '4\.3-vcpkg|noasm'
+```
+
+Observed: `0` license/notice members, and the listing holds no `COPYING`,
+`LICENSE`, `README`, `CMakeLists.txt`, patch, or build script — the 29 files are
+headers and the archive. `2,778` defined text symbols carry the `heifrs_` prefix,
+while `465` `heif_*` symbols stay unprefixed, and there are `0` unprefixed
+`de265_` or `x265_` text symbols: the codec objects are renamed, the libheif API
+is not. Banners: `1.23.6` in the header and as a bare library string,
+`1.1.3` in `de265.cc.o`, and `4.3-vcpkg` with
+`[Linux][GCC 13.3.0][64 bit][noasm] 8bit` in `version.cpp.o`; the library also
+carries `Encoder plugin requires at least libheif version 1.23.6`. Q14 draws the
+conclusion; §11 F01–F02 record it as an obligation.
 
 **Out of scope.** No vulnerability audit and no C/C++ codec source review happen
 here. Reviewing libheif/libde265/x265 C/C++ sources contradicts the stage's
@@ -599,9 +627,10 @@ bounds files in flight and not threads per file.
 
 ## 10. Seeded questions
 
-`Q01`–`Q13` are answered here; the register, the lifetime map, and §7–§9 above
-are the evidence base they cite. `Q14`–`Q17` follow in later sections of this
-document.
+`Q01`–`Q17` are answered here; the register, the lifetime map, and §7–§9 above
+are the evidence base they cite. `Q14`–`Q17` close the set: provenance from the
+archive bytes, orientation coverage, what the panic guards can see, and the
+license identifiers against their upstream texts.
 
 | ID | Question | Anchor | Answer |
 | --- | --- | --- | --- |
@@ -618,6 +647,83 @@ document.
 | Q11 | Which libheif return values are used without a check, and which null pointers are checked? | `src/decoder.rs:94-97`, `218-222`; `src/encoder.rs:320-326`, `339-343`, `401-415` | Unchecked: the four header accessors at `decoder.rs:94-97` (`heif_image_handle_get_width`, `_get_height`, `_get_luma_bits_per_pixel`, `_has_alpha_channel`); the two strides at `decoder.rs:215-223` and `encoder.rs:320-329`; `heif_encoding_options_alloc` at `encoder.rs:401`, whose result is passed to `heif_context_encode_image` at `:407` with only the free null-guarded at `:410`; `heif_init`'s returned `heif_error`, discarded at `ffi.rs:17`; and `heif_get_version()` at `lib.rs:36` (analysed in U20). Every other call that returns a status goes through `ffi::check` (`ffi.rs:24-37`), which reads `err.code` and copies the message. Null-checked before use: the decode context at `decoder.rs:72`, the decoded plane at `:218`, the encode context at `encoder.rs:340`, the encode plane at `:322`, the out handle at `:413`, and `err.message` at `ffi.rs:31`. The encoder at `encoder.rs:364` is not null-tested: it is used only after `ffi::check` accepts the acquisition (`:363-369`), which is the invariant U10 records. |
 | Q12 | `with_threads` is never called — what thread count does libheif use, and how does that interact with the Rayon HEIC worker cap? | `src/decoder.rs:113-117`, `174-177`; `heif_decoding.h:34-47` | `with_threads` only sets `config.threads` (`:113-117`), and `grep -rn "with_threads" src-tauri/src` prints nothing, so it stays `None` and the `heif_context_set_max_decoding_threads` call at `:175-177` never runs; libheif's default applies. The bundled header states no number: 0 means tiles decoded in the main thread and 1 means one background thread (`heif_decoding.h:34-35`), the getter returns "either the library default or the value last passed" (`:42-47`), and "the codecs itself may still use multi-threaded decoding" (`:36`) — so this review records the default as undocumented rather than guessing it. The Rayon cap (`convert.rs:69-73`) limits HEIC *files* to `(cores / 6).clamp(1, 3)`, not threads: worst case is that many libde265 pools, plus the global-pool scan (`scan.rs:132-135`) and up to four thumbnail decodes (`src/App.tsx:235`). |
 | Q13 | Is dynamic plugin loading reachable at runtime with the codecs compiled in? | Archive inventory; `heif_library.h:122-125`, `181-185` | Yes, and compiled-in codecs do not close it. `heif_init` calls `register_default_plugins` and then `heif_load_plugins` per directory from `get_plugin_paths` (relocations in `init.cc.o`, quoted in §7), and `plugins_unix.cc.o` imports `dlopen`/`dlsym`/`dlclose`/`dlerror` (`nm -A` on the extracted `lib/libheif.a`). `get_plugin_paths` reads only the environment variable `LIBHEIF_PLUGIN_PATH` (the `getenv` call plus `.rodata.str1.1` offset `0x3c`), while the header documents `LIBHEIF_PLUGIN_PATHS` (`:181-185`), and no built-in directory string is compiled in (`strings -a | grep -c "/usr/"` → `0`). So: reachable by a process that can set that variable and write a `.so` into the named directory — loading runs its constructors in-process — but not by a HEIC file, and nothing here sets the variable, so the scan surface is empty by default. The `libx265.so`/`libx265_main10.so`/`libx265_main12.so` strings are a separate mechanism: they live in x265's own `api.cpp.o`, whose `heifrs_x265_api_get_217` imports `dlopen`/`dlsym`; they are x265's 8/10/12-bit library names, and the seam only ever asks for 8-bit (`heic.rs:128`). |
+| Q14 | What do the archive bytes prove about provenance: `heifrs_`-prefixed symbols, version banners, and the complete absence of license or notice files? | `src-tauri/vendor/heif-bundles/bundle_linux_x64.zip` (archive inventory, §1) | A renamed prebuilt with a version number, not a provenance record. §1's inventory pins the file — 32 members, a 12,953,188-byte `lib/libheif.a`, SHA-256 equal to the manifest row — and the symbols show a renamed build: `2,778` defined text symbols carry the `heifrs_` prefix, `0` unprefixed `de265_` or `x265_` text symbols remain, and `465` `heif_*` symbols stay unprefixed. The linked libde265 and x265 objects are therefore modified builds — renamed wholesale — while libheif's API surface is untouched. The only authorship the bytes state is in the banners: libheif `1.23.6` (header `include/libheif/heif_version.h:34` and bare library string), libde265 `1.1.3` in `de265.cc.o`, x265 `4.3-vcpkg` with `[Linux][GCC 13.3.0][64 bit][noasm] 8bit` in `version.cpp.o`, and the plugin ABI string `Encoder plugin requires at least libheif version 1.23.6`. What is missing is everything a rebuild needs: `unzip -Z1 … \| grep -icE 'license\|copying\|notice'` prints `0`, and the 29 non-directory members are 28 headers plus the archive — no `COPYING`, `LICENSE`, `README`, `CMakeLists.txt`, patch, or build script. The bytes prove which versions were linked and that they were renamed and repackaged; they prove nothing about the build recipe, the upstream tree, or the license text. F01 and F02 record the consequence. |
+| Q15 | Does the decode path apply EXIF orientation at all? What does the fixture corpus cover, and what HEIC orientation cases stay untested? | `src-tauri/src/decode.rs`, `src-tauri/src/heic.rs`, `src-tauri/tests/fixtures/README.md` | No. `src-tauri/src/decode.rs:13-14` routes a HEIC to `crate::heic::decode`, and `:25-27` runs `apply_exif_orientation` only `if !kind.is_heic()`, with the reason at `:9-11` and `heic.rs:91-92`: HEIC rotation lives in the container (`irot`/`imir`) and applying EXIF too would double-rotate. The container half is real — `heif_decode_image` "will carry out all geometric transformations specified in the HEIF file (rotation, cropping, mirroring)" (`heif_decoding.h:198-200`) — and the header says nothing about EXIF. Coverage is exactly one HEIC orientation case: `rotated.heic`, an `irot` written by `heif-enc --rotate-cw 90`, decoded 120x160, tagged `heic-rotation` (`tests/fixtures/README.md:72`), asserted by `src-tauri/src/decode.rs:108-116` and `heic.rs:423-430`. EXIF orientation is covered only by the eight JPEG fixtures `orientation-1.jpg`–`orientation-8.jpg` (`tests/fixtures/README.md:73-80`). Untested HEIC cases: a file carrying EXIF orientation and no `irot`/`imir` — neither path rotates it, so it stays as stored; a file carrying both, the double-rotation case the comment names; `imir` mirroring; and 180° or non-right-angle rotation. The first case is the one that can silently produce a sideways image: `decode.rs` skips EXIF and nothing in the header promises libheif applies it, so the corpus cannot rule the failure out. F12 records it and stage 02's orientation work owns the decision. |
+| Q16 | Are the seam's `catch_unwind` guards sound over closures that call into C? Which panics are catchable and which are not? | `src-tauri/src/heic.rs:61-64`; §8 | They are sound as unwinding guards and cannot be sound as C guards, because they only see Rust unwinds. `guard` (`heic.rs:61-64`) wraps the four entry points and maps a caught unwind to `HeicError::Panic { stage }`; `AssertUnwindSafe` is justified because the closure owns everything it touches and the caller gets an error instead of the value. Inside the closure, `HeifDecoder::new` and `DynamicImage::from_decoder` call C through the wrapper, so what is catchable is exactly the Rust panics §8 tabulates: the `16 - self.depth` underflow, the `stride as usize` arithmetic, slice indexing, the two `CString::new(..).expect(..)` calls, and anything the `image` crate raises. What is not catchable: a panic inside `write_callback`, because `extern "C"` is a non-unwinding boundary and the abort shim fires below both guards (Q07, §8); allocation failure and stack overflow, which abort; a fault inside libheif, libde265, or x265, which is a signal rather than an unwind, so no `FileOutcome` is ever built; and a `panic = "abort"` build, which the release profile does not configure. No panic can start while control is inside C except in `write_callback`, which aborts, so the guard never observes half-written libheif state; it buys error reporting for Rust-side faults, not memory safety — U04's out-of-bounds read is outside it. |
+| Q17 | Confirm each license identifier against the upstream `COPYING` for the observed version, and record the URL read. | `licenses/README.md:15-19`, `:33-38` | Three are confirmed against the `COPYING` for the observed version; x265 is confirmed against the last published tag, `4.2`, because no `4.3` tag exists. The origin URLs and the 2026-11-19 retrieval date are recorded at `licenses/README.md:15-19`; the component-to-identifier mapping and the upstream file read for each at `:33-38`. libheif 1.23.6: the tag's `COPYING` reproduces LGPL-3.0 and the "or later" grant is in the file headers, including the archive's own `include/libheif/heif_version.h:8-10` and `heif.h:8-10` (`:42-46`). libde265 1.1.3: the tag's `COPYING` reproduces LGPL-3.0 and `libde265/de265.h` at that tag grants "or later" (`:47-51`). heif-rs 26.10.3: the `LICENSE` at the vendored commit `f8d7a972…` is byte-identical to `src-tauri/vendor/heif-rs/LICENSE`, Apache-2.0, and `Cargo.toml` declares `license = "Apache-2.0"` (`:59-62`). x265: the upstream tag list ended at `4.2` when read, so the identifier was read from the `4.2` `COPYING` (GPL-2.0) plus the `source/x265.h` header's "or later" grant (`:52-58`); `4.3-vcpkg` is the banner the linked archive carries, not a tag whose `COPYING` was read. GPL-2.0-or-later is therefore the grant the linked build inherits from 4.2, not a text retrieved at 4.3; the notice's evidence column cites the banner, not a `4.3` `COPYING`. |
 
-<!-- Q14-Q17: later task -->
+## 11. Findings
+
+One row per issue this review raises. Severity is the impact if the finding
+bites: **high** blocks a public binary release or can kill the process from
+untrusted input; **medium** is wrong or missing behaviour, diagnosis, or shipped
+content with a workaround; **low** has no release-path impact today. Disposition
+is one of `fixed here`, `accepted risk`, `watch`, `open obligation` (Decision 4).
+No row can be `fixed here` because this feature changes no code. Accepted risks
+name a rationale, a mitigation, and an owner in the fifth column; watches name
+the feature in this stage or the later stage that owns the check, plus the named
+follow-up; obligations name the gate they block and carry an exit condition in
+§12.
+
+| ID | Finding | Severity | Disposition | Rationale · mitigation · owner | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| F01 | The codec archive is an opaque third-party build with no build recipe, patch, license, or notice inside it; the linked bytes cannot be rebuilt from anything in this repository. | high | open obligation | Gate: stage 04 (Decision 5, first gap; §12.1). The archive's provenance is a release tag, not a source. | §1 archive inventory (32 members, 0 license/notice/recipe members, manifest hash match); Q14; `THIRD-PARTY-NOTICES.md` §4–§5; `VENDORED.md` documents only the Rust fork. |
+| F02 | The linked x265 and libde265 objects are symbol-renamed (`heifrs_`) modified builds with no published patch, so the corresponding source for the linked codecs is not in this repository and cannot be supplied from it. | high | open obligation | Gate: stage 04 (Decision 5, second gap; §12.2). Upstream objects were renamed wholesale; the source of the rename is not published here. | §1/Q14: 2,778 `heifrs_` text symbols, 0 unprefixed `de265_`/`x265_` symbols, 465 unprefixed `heif_*` symbols; `nm` on `de265.cc.o` and `encoder_x265.cc.o`; `THIRD-PARTY-NOTICES.md` §4. |
+| F03 | Statically linking LGPL-3.0 libheif and libde265 creates a §4 relink duty that a prebuilt archive cannot satisfy, and the repository ships no effective means to relink. | high | open obligation | Gate: stage 04 (Decision 5, third gap; §12.3). The application is GPL-3.0-or-later, which does not absorb the LGPL duty. | `THIRD-PARTY-NOTICES.md` §3–§4; Q17 (LGPL-3.0-or-later); the single static `lib/libheif.a` with no relink objects or scripts in the tree. |
+| F04 | U04: `copy_pixels` bounds its row walk by the handle's signalled dimensions and casts `stride: i32` to `usize` unchecked; a transformed or hostile file can make the decoded plane smaller than the signalled size, and the loop then reads past it. | high | accepted risk | Rationale: the vendored tree is frozen by rule, so no local fix is possible; the stride half is not reachable through libheif's plane API, the size half needs a container whose transform changes the decoded extent, and the worst case is one aborted process, not cross-file corruption. Mitigation: per-call ownership means no other file's data is at risk; stage 02's orientation fixtures exercise transforms; feature-05-trust-gate makes this row a re-vendor check. Owner: engineering (feature 04 author); PM sign-off at review. | §5 U04; §8 (the `decoder.rs:223-226` row); §9; `heif_image_handle.h:56-79`; `heif_image.h:252-282`; `decoder.rs:209-244`. |
+| F05 | U15 and U20 rest on libheif behaviour its header does not promise — that `heif_encoder_set_parameter_string` copies the value, and that `heif_get_version()` returns a static string — so a future libheif can break the wrapper without an API change. | medium | watch | Owner: feature-05-trust-gate. Named follow-up: at every codec-archive bump the upgrade runbook re-reads `heif_encoding.h` and `heif_library.h`, and adds a parameter round-trip test and a version-string lifetime check. | §5 U15/U20 and the paragraph after the register; `heif_encoding.h:212-215`; `heif_library.h:69-76`; `encoder.rs:494-504`; `lib.rs:32-39`. |
+| F06 | Q02's error collapse: container-parse failure, a missing primary handle, and pixel-decode failure all arrive as `HeifError::Decode`, so the seam classifies by call site; an allocation failure reads as a damaged file and a missing decoder as a generic decode failure, and `classify_decode_error`'s `IoError` arm is dead for this decoder. | medium | accepted risk | Rationale: the collapse is in the pinned crate (`src/error.rs:8-24`), and the seam has no finer information; its call-site split is deliberate and pinned by tests. Mitigation: the user-visible strings are tested; feature-05-trust-gate re-checks the splice when the wrapper moves, and a future variant reopens `heic.rs:66-78`. Owner: engineering (feature 04 author); PM sign-off. | Q02; §4; `src-tauri/src/heic.rs:66-78`, `:100-101`; `src/error.rs:8-24`; `decoder.rs:85`, `:91`, `:187`. |
+| F07 | Q01's depth collapse: `bit_depth()` reports `Eight` for 9- and 11-bit files while the decode path keys on `depth > 8`, so the header report is wrong and the pixels right — the values are scaled into 16-bit lanes. | low | watch | Owner: feature-05-trust-gate. Named follow-up: the re-vendor check notices when the wrapper's `BitDepth` grows a variant; until then the value is test-only. | Q01; §4 (probe row); `decoder.rs:121-127`, `:135-162`, `:211`; `heic.rs:191-197`; `lib.rs:101-110`. |
+| F08 | Q07's abort path: a panic inside `write_callback` reaches the non-unwinding `extern "C"` boundary and aborts below both guards, so one encode can kill the batch, the app, and every worker. | medium | accepted risk | Rationale: the reachable triggers are `Vec` capacity overflow above `isize::MAX` and allocation failure, both outside the app's control; the callback ABI is the wrapper's design and changing it needs a re-vendor. Mitigation: ordinary Rust panics on the encode path stay caught; the pool bounds concurrent encodes; feature-05-trust-gate re-checks the callback on a wrapper bump. Owner: engineering (feature 04 author); PM sign-off. | Q07; §8; `encoder.rs:508-524`, `:424-429`; `convert.rs:98-113`; `heic.rs:62`. |
+| F09 | Q08: `heif_encoding_options_alloc` is not null-checked before being passed to `heif_context_encode_image`; the free is guarded and the header documents NULL as the expected options value, so the only cost is an invisible allocation failure. | low | accepted risk | Rationale: the null path is the documented default, not a null dereference, and the failure is invisible either way. Mitigation: the free stays null-guarded so there is no leak; feature-05-trust-gate includes this call site in its re-vendor check. Owner: engineering (feature 04 author); PM sign-off. | Q08; §6 "Options"; §5 U12; `encoder.rs:401-415`; `heif_encoding.h:334-346`. |
+| F10 | Q13's plugin surface: `heif_init` `dlopen`s whatever `.so` files sit in `LIBHEIF_PLUGIN_PATH` and runs their constructors in-process; a HEIC file cannot reach it, a process that can set the variable and write the directory can, and nothing in this repository sets it. | low | watch | Owner: stage 02 (HEIC output correctness). Named follow-up: a test that launches the app with a poisoned `LIBHEIF_PLUGIN_PATH` and asserts the loader is inert or the path is ignored (Handoff item 4). | Q13; §7 (init disassembly, `LIBHEIF_PLUGIN_PATH`, no `/usr/` string); §9 "The plugin-load surface"; `heif_library.h:122-125`, `:181-185`. |
+| F11 | CVE posture is unmeasured: the review records pinned versions and upstream release dates but performs no vulnerability audit, and no scanner covers the codec archive. | medium | watch | Owner: feature-05-trust-gate. Named follow-up: the upgrade runbook adds the CVE re-check as a required step and exercises it once against libheif 1.23.6, libde265 1.1.3, and x265 4.3-vcpkg. | §1 "Out of scope"; Decision 6; `THIRD-PARTY-NOTICES.md` §1; Handoff item 3. |
+| F12 | Q15: the decode path never applies EXIF orientation to a HEIC, and the corpus tests only a container `irot`; `decode.rs` skips EXIF for a HEIC carrying orientation only there, no fixture proves whether libheif compensates, and the both-transforms, `imir`, and 180° cases are untested. | medium | watch | Owner: stage 02's orientation work. Named follow-up: add an EXIF-only HEIC and an `imir` fixture, then decide whether `decode.rs` should read EXIF for HEIC and how to avoid double rotation on files carrying both. | Q15; `src-tauri/src/decode.rs:9-11`, `:13-14`, `:25-27`; `src-tauri/src/heic.rs:91-92`; `heif_decoding.h:198-200`; `tests/fixtures/README.md:72-80`. |
+| F13 | The notice and the three license texts are not inside any bundle: a binary built today carries none of them, and this feature does not touch the shipping mechanism. | medium | watch | Owner: stage 04 (packaging). Named follow-up: wire `bundle.resources`, then verify `THIRD-PARTY-NOTICES.md` and all three texts appear in the built artifact (Handoff item 2). | Decision 7; Handoff item 2; `src-tauri/tauri.conf.json`'s `bundle` block has no `resources` key; `THIRD-PARTY-NOTICES.md` §6. |
+
+## 12. Exit criteria
+
+**What would reopen the keep-the-encoder decision.** The stage's out-of-scope
+line permits one reopening — a found defect, not a preference. On what this
+review found, the decision stays closed unless one of these becomes true:
+
+1. **A defect the seam cannot guard.** A decode or encode fault that corrupts
+   memory or kills the process on ordinary input, not only on a hand-built
+   container. F04 and F08 are recordable today because their triggers are
+   conditional; a crash reproduced from a normal camera file, or a trigger
+   added to the fixture corpus, moves U04 from accepted risk to a defect.
+2. **A defect whose only fix is a different codec build.** Patching inside
+   libde265/x265, replacing the wrapper, or building the C stack here is the
+   fork the stage refused. A defect that requires it reopens the decision.
+3. **An obligation stage 04 cannot clear.** If one of the three obligations
+   below is neither cleared nor accepted in writing by the PM, there is no
+   public binary release, and the decision to keep the encoder has to be
+   revisited rather than shipped around.
+
+Nothing else reopens it: F06, F07, F09, and F10 are diagnosis, reporting, or
+local-environment issues, not defects in the encoder's output.
+
+**The three open obligations.** Each blocks a public binary release. Stage 04
+owns all three. The PM (Darticus) is the only person who can override one, in
+writing, and the override must be recorded in the stage 04 summary and in
+`THIRD-PARTY-NOTICES.md` before a binary ships. An override does not clear the
+row: F01–F03 and this section stay the review's position, and "accepted in
+writing" is a decision, not evidence that the gap closed.
+
+| Obligation | Gate | Cleared when | Evidence that clears it | Owner |
+| --- | --- | --- | --- | --- |
+| §12.1 — F01 opaque archive | stage 04 | The `binaries-heif` 26.10.1 build recipe, or a reproducible equivalent, is committed for the archive the binary actually links. | The recipe is in the tree; the archive is rebuilt (or re-pinned) from it; `src-tauri/vendor/heif-bundles/manifest.json` records the new hash; `scripts/ci.sh build` links the rebuilt archive with no download. | stage 04; PM override in writing |
+| §12.2 — F02 renamed codecs | stage 04 | The patch or recipe that produces the `heifrs_` renaming is obtained and committed, or x265 and libde265 are rebuilt unrenamed from upstream at the observed versions and the manifest is re-pinned. | Patch or upstream sources are in the tree; `nm` on the rebuilt archive shows the expected symbol names; the corresponding source for the linked codecs travels with the release. | stage 04; PM override in writing |
+| §12.3 — F03 LGPL-3.0 §4 relink duty | stage 04 | The effective means to relink against modified libheif and libde265 is shipped — application object files, or a buildable source tree plus the scripts that relink. | A staged release artifact contains that means, and a recorded walkthrough relinks against a locally modified library and produces a working binary; the notice's §3 points at it. | stage 04; PM override in writing |
+
+**Where the rest are re-checked.** F04 reopens on the trigger in item 1 above.
+F05, F07, F09, and F11 belong to `feature-05-trust-gate`'s upgrade runbook and
+are re-read at every wrapper or archive bump. F10 and F12 belong to stage 02's
+HEIC work, with the poisoned-path test and the orientation fixtures named in
+§11. F13 belongs to stage 04's packaging step and clears when the bundle listing
+shows the notice and the three texts.
+
+This review is not legal advice and does not declare the project compliant.
+§12 states what evidence would clear each gap; producing that evidence is the
+work, and until it exists the gaps stay open.
 

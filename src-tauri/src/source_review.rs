@@ -229,6 +229,133 @@ fn review_covers_every_unsafe_site() {
 }
 
 // ---------------------------------------------------------------------------
+// S3: every seeded question has an answer
+// ---------------------------------------------------------------------------
+
+/// The `## 10. Seeded questions` section, up to the next level-two heading.
+/// Scoping keeps a question id quoted elsewhere in the review from counting as
+/// an answer row.
+fn seeded_questions_section(review: &str) -> &str {
+    let (_, after) = review
+        .split_once("## 10. Seeded questions")
+        .expect("the review has a `## 10. Seeded questions` section");
+    after
+        .split_once("\n## ")
+        .map_or(after, |(section, _)| section)
+}
+
+fn is_question_id(id: &str) -> bool {
+    id.len() == 3 && id.starts_with('Q') && id[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The first cell of every `Q` row, trimmed, in document order. A row is
+/// recognised by its shape — a line beginning with `| Q` and a two-digit id —
+/// so prose that cites a question id cannot satisfy the check.
+fn seeded_question_ids(section: &str) -> Vec<String> {
+    section
+        .lines()
+        .filter_map(|line| {
+            let mut cells = line.split('|');
+            cells.next()?;
+            let id = cells.next()?.trim();
+            is_question_id(id).then(|| id.to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn every_seeded_question_is_answered() {
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+    let ids = seeded_question_ids(seeded_questions_section(&review));
+    let expected: Vec<String> = (1..=17).map(|number| format!("Q{number:02}")).collect();
+
+    for id in &expected {
+        assert!(
+            ids.contains(id),
+            "docs/HEIC-SOURCE-REVIEW.md §10 has no row answering {id}"
+        );
+    }
+    assert_eq!(
+        ids.len(),
+        expected.len(),
+        "§10 should hold exactly one row per seeded question, Q01–Q17"
+    );
+
+    println!("seeded questions covered: {}", ids.len());
+}
+
+// ---------------------------------------------------------------------------
+// S4: every finding carries exactly one disposition
+// ---------------------------------------------------------------------------
+
+/// The `## 11. Findings` section, up to the next level-two heading.
+fn findings_section(review: &str) -> &str {
+    let (_, after) = review
+        .split_once("## 11. Findings")
+        .expect("the review has a `## 11. Findings` section");
+    after
+        .split_once("\n## ")
+        .map_or(after, |(section, _)| section)
+}
+
+fn is_finding_id(id: &str) -> bool {
+    id.len() == 3 && id.starts_with('F') && id[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Every `F` row as its full line, so the disposition can be looked for across
+/// the cells the row actually has. Row shape, not a document-wide search, is
+/// what admits a line here.
+fn finding_rows(section: &str) -> Vec<String> {
+    section
+        .lines()
+        .filter(|line| {
+            let mut cells = line.split('|');
+            cells.next();
+            cells.next().is_some_and(|id| is_finding_id(id.trim()))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+const DISPOSITIONS: [&str; 4] = ["fixed here", "accepted risk", "watch", "open obligation"];
+
+#[test]
+fn every_finding_has_a_disposition() {
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+    let rows = finding_rows(findings_section(&review));
+
+    assert!(
+        rows.len() >= 8,
+        "§11 records {} finding(s); the review requires at least eight",
+        rows.len()
+    );
+
+    let mut blocking = 0;
+    for row in &rows {
+        let matched: Vec<&str> = DISPOSITIONS
+            .iter()
+            .copied()
+            .filter(|disposition| row.contains(disposition))
+            .collect();
+        assert_eq!(
+            matched.len(),
+            1,
+            "each finding row must carry exactly one disposition; this row carries {matched:?}: {row:?}"
+        );
+        if row.contains("open obligation") && row.contains("stage 04") {
+            blocking += 1;
+        }
+    }
+
+    assert!(
+        blocking >= 3,
+        "at least three findings must pair `open obligation` with `stage 04`; found {blocking}"
+    );
+
+    println!("findings with disposition: {}", rows.len());
+}
+
+// ---------------------------------------------------------------------------
 // S5: the review records the versions and archives it is pinned to
 // ---------------------------------------------------------------------------
 
