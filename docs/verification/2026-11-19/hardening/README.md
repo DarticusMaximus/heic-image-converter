@@ -25,14 +25,15 @@ state; the working tree carries the feature. Nothing here is committed.
 | bash 3.2 used for the portability log | `GNU bash, version 3.2.57(2)-release (x86_64-unknown-linux-gnu)`, locally built at `/tmp/bash32/bash-3.2.57/bash` |
 | `python3` | `Python 3.14.8` |
 | `sha256sum` | `sha256sum (GNU coreutils) 9.12` |
-| HEAD | `b86cb998b364a90b6d126d63d8c160c7c65e199b` (`b86cb99`, "Record the green four-job hosted run") |
+| HEAD | `b86cb998b364a90b6d126d63d8c160c7c65e199b` (`b86cb99`, "Record the green four-job hosted run") for the captures below; the work is committed as `43c94d34a7a11b70f8d50de662426e35fa39e5ca` ("Harden the HEIC trust boundary against the stage-01 review"), which is what `offline-post-commit.log` certifies |
 
 ## Tree state
 
-`git status --porcelain` shows 19 modified paths and the new untracked
-`docs/verification/2026-11-19/hardening/` (the four `.log` files are themselves
-hidden by `.gitignore`'s `*.log`). The tree the re-captured
-`header-and-bindings-tamper.log` certifies is:
+The captures below were made against `b86cb99` plus the uncommitted feature-06
+diff; that work is now commit `43c94d3`. `git status --porcelain` showed 19
+modified paths and the new untracked `docs/verification/2026-11-19/hardening/`
+(the four `.log` files are themselves hidden by `.gitignore`'s `*.log`). The
+tree the re-captured `header-and-bindings-tamper.log` certifies is:
 
 ```
 $ git diff | sha256sum
@@ -103,7 +104,9 @@ those three would exercise the same checks, not print the same lines.
 | `header-and-bindings-tamper.log` | On a clean warm tree, `verify` exits 0. Then each of five mutations makes the on-demand verifier fail naming the file: editing the entry header `include/libheif/heif.h` (`failed its checksum`, exit 1, build exit 101), editing a sibling `heif_image_handle.h` (same), adding an extra header the archive lacks (`is not part of bundle_linux_x64.zip`, exit 1, build 101), editing `out/bindings.rs` (`failed its checksum`, exit 1, rebuild regenerates it and `verify` is green), and deleting `out/bindings.rs.sha256` (`cannot be attested`, exit 1, rebuild writes it again). Every mutation is restored and the tree is green at the end; the final `git diff` hash equals the opening one. | That `src-tauri/target/` as a whole is trusted, or that Cargo's fingerprints, incremental data and final binaries are verified. Only the codegen inputs the build reads — the extracted `include/` tree and cached `bindings.rs` — are attested, and only against the archive the run hash-verified. It does not cover a build that used `HEIF_BINARIES_DIR`. |
 | `bash-32-portability.log` | A locally built GNU bash 3.2.57 reports `BASH_VERSION=3.2.57(2)-release`; `bash -n` accepts both scripts; a checkout-like tree with the working-tree `scripts/` and the committed bundle but no `src-tauri/target` runs `verify` to exit 0 with `no extracted bundle directories found — nothing attested (cold cache)` and `verified 4 committed archives, 0 extracted libraries`; the warm tree exits 0 with 7 extracted libraries; a corrupted library exits 1 naming it and the restore is green; `scripts/ci.sh trust` run entirely under 3.2 (both scripts take `bash` from `PATH`) prints `trust gate: PASS`; the throwaway tree (`task11-cold`) is removed. | A real Mac. It is a 3.2-compatible shell on Linux: no Darwin codec archive, no macOS `target/`, no Xcode toolchain. It also runs only the two shell scripts — `cargo`, `rustc`, `find` and `python3` were the host's; the Rust suite was not run under 3.2. |
 | `target-and-cargo-target-dir.log` | `verify` finds the extraction under the `--target` layout (`target/<triple>/<profile>/build/...`), fails with exit 1 when that library is corrupted, and is green after restore. A build with `CARGO_TARGET_DIR=/home/darticus/.cache/task11-alt-target` (brought up cold, `Finished … in 59.11s`) is discovered and scanned **alongside** the default tree (`scanning src-tauri/target` and `scanning /home/darticus/.cache/…`); corrupting its library exits 1 naming that path and with 8 libraries checked. A `CARGO_TARGET_DIR=/nonexistent` is refused with exit 1 and the variable, value and resolved path. A cold tree prints the distinct cold-cache line; a `heif-rs` `out/` with no bundle directory exits 1 (`has no extracted bundle directory`). All three scratch trees this log creates (`task11-alt-target`, `task11-cold2`, `task11-outonly`) are removed and the final tree is green. | Every layout cargo could ever invent, or a cross-compiled `--target` other than the host triple. Three shapes were exercised: default, explicit `--target x86_64-unknown-linux-gnu`, and a redirected tree. It does not prove a *release-profile* `--target` build or a second triple. |
-| `offline-overrides.log` | Each of `HEIF_BINARIES_DIR` set, `CARGO_TARGET_DIR` set, and both set makes `scripts/ci.sh offline` exit 1 before the disk check or clone, naming the variable, its value and why a pass would not describe the committed bundle, then printing the one-line remedy and `offline gate: FAIL (exit 1)`. No `offline-gate.*` clone directory exists before or after. The PASS half is a clearly labelled **excerpt** (source SHA-256 recorded) from Task 10's real run on the same working tree at HEAD `b86cb99`: it shows the effective codec source and target lines, the positive control, `87 passed; 1 ignored` in the clone, and `offline gate: PASS (HEAD b86cb998…, isolation: unshare -rn)` with exit 0. | That this Task-11 session ran the offline gate end to end. It did not: the refusal paths were re-run, the PASS is copied from the Task 10 transcript and labelled as such. That PASS also proves HEAD's committed Rust gate, not the uncommitted feature-06 test set — the gate clones HEAD by design. |
+| `offline-overrides.log` | Each of `HEIF_BINARIES_DIR` set, `CARGO_TARGET_DIR` set, and both set makes `scripts/ci.sh offline` exit 1 before the disk check or clone, naming the variable, its value and why a pass would not describe the committed bundle, then printing the one-line remedy and `offline gate: FAIL (exit 1)`. No `offline-gate.*` clone directory exists before or after. The PASS half is a clearly labelled **excerpt** (source SHA-256 recorded) from Task 10's real run on the same working tree at HEAD `b86cb99`: it shows the effective codec source and target lines, the positive control, `87 passed; 1 ignored` in the clone, and `offline gate: PASS (HEAD b86cb998…, isolation: unshare -rn)` with exit 0. | That this Task-11 session ran the offline gate end to end. It did not: the refusal paths were re-run, the PASS is copied from the Task 10 transcript and labelled as such. That PASS also proves HEAD's committed Rust gate, not the uncommitted feature-06 test set — the gate clones HEAD by design. The gap was closed afterwards: see `offline-post-commit.log`, which is a fresh run on commit `43c94d3`. |
+
+| `offline-post-commit.log` | A fresh `scripts/ci.sh offline` run **after** the work was committed as `43c94d3`: clean clone of that commit, `unshare -rn`, both overrides unset and the effective codec source and target printed, the two-sided positive control, no `heif-rs: downloading` line, `107 passed; 0 failed; 1 ignored` inside the sandbox, and `offline gate: PASS (HEAD 43c94d34…, isolation: unshare -rn)`, exit 0. | That the hosted `offline` job ran (it has not), or anything about macOS. It fixes its own machine's environment only: the positive control proves the sandbox could not reach the network on this host. |
 
 ## Full local gate
 
@@ -167,12 +170,19 @@ What this evidence does **not** establish:
   macOS toolchain, filesystem or codec archive. The macOS trust gate on a Mac
   remains unrun.
 - **No hosted CI run covers this tree.** The last green four-job run is
-  `44591752926` at `c06fcea`, the commit before HEAD's bookkeeping commit; the
-  feature-06 diff is uncommitted, so no runner has seen it. The release workflow
-  change in particular has never executed.
-- **The offline PASS is an excerpt, not a fresh run of this tree.** It is Task
-  10's transcript on the same working tree, and it certifies HEAD's committed
-  Rust gate because the gate clones HEAD. The three refusals *were* re-run here.
+  `44591752926` at `c06fcea`; the feature-06 work is commit `43c94d3`, so no
+  GitHub runner has seen it. The release workflow change in particular has
+  never executed.
+- **The offline gate does cover the feature commit, locally.** After `43c94d3`
+  was committed, `scripts/ci.sh offline` was run against it and passed:
+  `offline-post-commit.log` (SHA-256 `fe59e571…`) shows the sandboxed clone
+  build with the committed rejection of both overrides, no
+  `heif-rs: downloading` line, `107 passed; 0 failed; 1 ignored`, and
+  `offline gate: PASS (HEAD 43c94d34…, isolation: unshare -rn)`. That log
+  post-dates the files above and is not cited by them. The earlier
+  `offline-overrides.log` still carries a labelled excerpt of Task 10's run on
+  the pre-commit working tree, which certifies only HEAD's committed Rust gate
+  at the time (87 tests).
 - **`.ssc/BASELINE.md` still lags the tree.** `ssc-finalize` owns it; it was not
   edited by this task.
 - **Below-floor review findings are out of scope.** All ten Medium+ findings are
