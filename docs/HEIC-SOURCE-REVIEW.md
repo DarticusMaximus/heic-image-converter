@@ -343,10 +343,265 @@ anywhere in the crate, so libheif's globals live until the process exits. §7
 covers the consequences; the ownership point is that nothing in the wrapper can
 free them, and nothing tries.
 
+## 7. Concurrency and global state
+
+Every libheif object the wrapper owns is per call. What it shares between calls
+is libheif's process-global state, and the only thing that touches it is one
+`Once`.
+
+**One initialisation.** `ffi::init` (`src-tauri/vendor/heif-rs/src/ffi.rs:12-20`)
+holds `static INIT: Once` (`:13`) and runs `sys::heif_init(ptr::null_mut())`
+inside `call_once` (`:14-19`). It is called on every decode (`src/decoder.rs:66`,
+right after the file is read) and every encode (`src/encoder.rs:267`), so the
+first HEIC operation in the process does the work and every later one is a
+branch. The
+returned `heif_error` is discarded (`ffi.rs:17`), and because `Once` does not
+retry, an initialisation failure is permanent for the process and unobservable
+where it happens: each later libheif call reports whatever its own entry point
+says.
+
+libheif's `heif_init` is itself reference counted under a mutex, so the `Once` is
+belt and braces. Disassembling the committed archive's `init.cc.o` shows
+`pthread_mutex_lock`, a counter in `.bss` that is tested and incremented, and
+only on the zero branch the work: `register_default_plugins` (behind its own
+guard flag) and then `heif_load_plugins(dir, NULL, NULL, 0)` for every directory
+`get_plugin_paths` returns:
+
+```
+$ unzip -p src-tauri/vendor/heif-bundles/bundle_linux_x64.zip lib/libheif.a > /tmp/libheif.a
+$ cd /tmp && ar x libheif.a init.cc.o plugins_unix.cc.o
+$ objdump -dr --disassemble=heif_init init.cc.o \
+    | grep -E 'heif_load_plugins|get_plugin_paths|register_default_plugins'
+			e59: R_X86_64_PLT32	heifrs__Z16get_plugin_pathsB5cxx11v-0x4
+			e8b: R_X86_64_PLT32	heif_load_plugins-0x4
+			ee1: R_X86_64_PLT32	heifrs__Z24register_default_pluginsv-0x4
+```
+
+**No `heif_deinit`.** `grep -rn "heif_deinit" src-tauri/vendor/heif-rs/src` prints
+only `ffi.rs:10`, the comment that explains the choice. The header says the pair
+is reference counted, that each `heif_init` should be matched, and that some
+library memory objects are never freed without it (`heif_library.h:116-120`).
+What stays resident is the plugin registry built by that single initialisation,
+the plugin instances it holds, and libheif's globals: one-time, bounded by the
+library's own structures rather than by the number of files, and reclaimed by the
+OS at exit. It also means the plugin path is scanned exactly once, at first use,
+so a directory that appears later is never picked up.
+
+**What `heif_init` loads, and from where.** The header is explicit that
+`heif_init` "will load the external modules installed in the default plugin
+path", and that codecs compiled into the library are available even without it
+(`heif_library.h:122-125`). In this archive the scan is driven by the
+environment, and by nothing else:
+
+```
+$ objdump -dr --disassemble=heifrs__Z16get_plugin_pathsB5cxx11v init.cc.o \
+    | grep get_plugin_directories_from_environment_variable
+			726: R_X86_64_PLT32	heifrs__Z53get_plugin_directories_from_environment_variable_unixB5cxx11v-0x4
+$ readelf -p .rodata.str1.1 plugins_unix.cc.o | grep LIBHEIF
+  [    3c]  LIBHEIF_PLUGIN_PATH
+```
+
+`get_plugin_paths` calls only that reader, the string handed to `getenv` is
+`LIBHEIF_PLUGIN_PATH`, and `strings -a lib/libheif.a | grep -c "/usr/"` prints
+`0`, so no built-in directory is compiled in. The bundled header, however, names
+the variable `LIBHEIF_PLUGIN_PATHS` (`heif_library.h:181-185`). That
+byte-versus-header disagreement is recorded here; §10 Q13 states what it means
+for reachability.
+
+**Rayon worker counts.** `convert_all` sizes a private pool from
+`std::thread::available_parallelism()` (`src-tauri/src/convert.rs:65-67`) with two
+formulas (`:69-73`): HEIC output gets `(cores / 6).clamp(1, 3)` workers, every
+other output `(cores / 2).clamp(1, 6)`, built at `:75` and installed for the batch
+at `:128-131` with a fallback to the global pool if the builder fails. A HEIC
+batch therefore runs at most three `encode` calls at once, each one decode and one
+x265 encode. Two paths are not sized by that formula: `scan::scan_with_limit`
+describes candidates on the *global* Rayon pool (`src-tauri/src/scan.rs:132-135`),
+calling `decode::dimensions` — a full file read and container parse per HEIC
+(`scan.rs:155`, `src-tauri/src/heic.rs:108-115`) — and the frontend keeps at most
+four `load_thumbnail` calls in flight (`src/App.tsx:235`), each a
+`spawn_blocking` full decode (`src-tauri/src/lib.rs:36-40`). Scan, thumbnails,
+and a conversion can overlap, so the process can hold more HEIC contexts than the
+conversion cap suggests.
+
+**Decode threading inside libheif.** `HeifDecoder::with_threads`
+(`src/decoder.rs:113-117`) is the only way `config.threads` becomes `Some`, and
+`grep -rn "with_threads" src-tauri/src` prints nothing, so the
+`heif_context_set_max_decoding_threads` call at `src/decoder.rs:175-177` never
+executes and libheif's default stands. The bundled header does not publish that
+default: it documents 0 as main-thread tile decoding and 1 as a single background
+thread (`heif_decoding.h:34-35`), says the getter returns "either the library
+default or the value last passed" (`:42-47`), and warns that the setting "only
+affects libheif itself. The codecs itself may still use multi-threaded decoding"
+(`:36`). The pool formula therefore bounds files, not threads: three HEIC workers
+can each have libde265's own pool running underneath, and nothing here sets a
+ceiling on that.
+
+**Per-call contexts.** No context, handle, plane, or encoder is cached or shared.
+`HeifDecoder::new` allocates its context (`src/decoder.rs:71`) and frees it in
+`Drop` (`:259`); `EncoderConfig::encode` allocates a context per encode
+(`src/encoder.rs:339`) and frees it on both paths (`:347`). There is no
+`static mut`, no thread-local, and no pooling, so two files never share libheif
+state below the plugin registry: one file's parse or decode cannot observe
+another's context. The shared surface is CPU and memory contention, plus the
+process-global state §9 and Q13 discuss.
+
+## 8. Panics and unwinding
+
+Two guards are the whole policy: the seam's `guard` (`src-tauri/src/heic.rs:59-64`)
+around each HEIC entry point, and `convert.rs`'s per-file `catch_unwind`
+(`src-tauri/src/convert.rs:98-113`).
+
+**The two guards.** `guard` wraps `decode_from` (`heic.rs:99`), `dimensions`
+(`:110`), `encode` (`:120`), and the test-only `probe` (`:185`), turning an unwind
+into `HeicError::Panic { stage }` (`:61-64`). `AssertUnwindSafe` is sound here
+because the closure owns everything it touched and the caller gets an error
+instead of the value, so no half-updated state is observed;
+`a_panicking_reader_is_a_decoder_panic` (`heic.rs:272-276`) exercises it with a
+`Read` impl that panics. The outer net in `convert.rs:98-100` wraps the whole
+pipeline — `convert_one` → `encode_bytes` → `decode::load` → format encode →
+`std::fs::write` — and reports `"internal error while converting this file"`
+(`:110`) for anything that unwinds. A HEIC panic is caught twice; a PNG/JPEG
+encode, resize, or `image`-crate panic is caught once.
+
+**Every reachable panic in the wrapper.**
+
+| Site | Panic | Reachable? |
+| --- | --- | --- |
+| `src/encoder.rs:494`, `:495` | `CString::new(..).expect(..)` on the parameter name and value. | Not through this product: the values are `Preset::as_str()` (`:36-49`) and `Chroma::as_str()` (`:64-70`), constant ASCII with no interior NUL. These two are the crate's only `expect`s; `grep -rn "unwrap" src/*.rs` prints nothing. A future variant with a NUL would change that. |
+| `src/decoder.rs:211` | `16 - self.depth` underflows: debug panic, release wrap. | Only if a file reports a luma depth above 16. The linked codecs signal 8/10/12 (Q03), so this is latent, not reachable. |
+| `src/decoder.rs:223-226` | `stride as usize` followed by `y * stride` overflows for a negative stride: debug panic, release wrap to a wild read. | Not reachable through libheif's plane API, which reports positive bytes per line (Q04). The result would be a read, not a write. |
+| `src/decoder.rs:231`, `:240-241`; `src/encoder.rs:216-218` | Slice indexing into `buf` (`buf[dst_row..]`, `buf[off]`, `buf[off + 1]`, `read_sample`). | In bounds by construction: both sides require exact length equality first (`decoder.rs:166-171`, `encoder.rs:257-265`). |
+| `src/decoder.rs:165`; `src/encoder.rs:257`, `:449` | `usize` products. | No overflow on a 64-bit target at the `u32` dimension maxima. On 32-bit the `image` crate's `isize::MAX` rejection fires before a buffer exists (`image-0.25.10/src/io/free_functions.rs:309-314`). |
+| `src/encoder.rs:519` | `Vec::extend_from_slice` in `write_callback`: capacity overflow panics, allocation failure aborts. | The only panic on the encode path with an untrusted size input; see the `extern "C"` paragraph below. |
+
+**Allocation failure is not a panic.** Rust's default allocation-error handler
+aborts the process rather than unwinding, so `catch_unwind` at `heic.rs:62` and
+`convert.rs:98` cannot cover an out-of-memory in `read_to_end` (`decoder.rs:64`),
+in the `image` crate's decode buffer (`free_functions.rs:316`), or in the writer's
+`Vec` (`encoder.rs:519`). `Cargo.toml` deliberately leaves `panic = "abort"` unset
+(the comment above `[profile.release]`), which is what keeps ordinary panics
+catchable; it does not change the allocator's behaviour.
+
+**The `image` crate's own paths.** `DynamicImage::from_decoder`
+(`image-0.25.10/src/images/dynimage.rs:243-245`) reads dimensions and color type,
+then `decoder_to_image` (`:1557-1624`) saturates `total_bytes` at `u64::MAX`
+(`src/io/decoder.rs:66-71`), rejects anything above `isize::MAX` with
+`ImageError::Limits` (`src/io/free_functions.rs:309-314`), allocates a zeroed
+buffer (`:316`), calls `read_image`, and maps a short buffer to
+`ParameterError::DimensionMismatch` (`dynimage.rs:1612-1616`). Absurd dimensions
+are therefore an error, not a panic; the failure mode that escapes is the
+allocation.
+
+**The `extern "C"` boundary.** `write_callback` is `unsafe extern "C" fn`
+(`src/encoder.rs:508-524`) and libheif calls it synchronously from
+`heif_context_write` (`:424-429`). A Rust function declared `extern "C"` is a
+non-unwinding boundary: if a panic starts inside it, the compiler's abort shim
+runs and the process aborts on the spot. Unwinding into libheif's C++ frames is
+not what happens and is not possible with this ABI — permitting it would require
+`extern "C-unwind"`, which the function does not use. The consequence is that the
+guards above sit *above* `heif_context_write` in the stack, so a panic raised in
+the callback aborts below them and neither `catch_unwind` ever sees it. The
+reachable trigger is `out.extend_from_slice(...)` (`:519`) with a size that
+overflows `Vec` capacity; an allocation failure there aborts for the reason above.
+
+**What the guards do and do not buy.** They cover Rust panics that unwind through
+Rust frames: every arithmetic, index, and `expect` panic in the table, plus
+anything the `image` crate raises. They do not cover allocation failure (abort),
+stack overflow (abort), a segfault or other fault inside libheif/libde265/x265
+(the process dies and no `FileOutcome` is ever built), a `panic = "abort"` build
+(not configured), or the `extern "C"` boundary. So the per-file isolation
+guarantee — one bad file costs one row in the results list — holds for the first
+group and not for the others. One detail: `catch_unwind` does not silence the
+log, because the default hook runs before unwinding; a caught panic still prints
+to stderr while the batch continues.
+
+## 9. Untrusted input and resource bounds
+
+The product treats every input file as hostile, but it applies no limit of its own
+to size, pixel count, or parse work. What it has is the read the wrapper does, the
+checks `image` does, and whatever libheif enforces internally.
+
+**Whole-file reads.** `HeifDecoder::new` reads the entire input into a fresh
+`Vec<u8>` before parsing anything (`src/decoder.rs:63-64`), and the seam calls it
+for `decode` (`heic.rs:94-100`) and for `dimensions` (`heic.rs:109-113`); the
+test-only `probe` does the same with `std::fs::read` (`heic.rs:184`). There is no
+size limit in the seam, in `decode.rs`, or in `scan.rs`: the only ceiling is
+`MAX_FILES = 20_000` (`scan.rs:14`), a count, and `describe` calls `dimensions`
+for every candidate (`scan.rs:132-135`, `:155`), so opening a folder of large
+HEICs reads each file in full just to report a dimension. The buffer grows by
+reallocation, so peak memory can exceed the final file size by the old block
+still being live during a copy.
+
+**The decoded-pixel multiplier.** After the container parses, the wrapper takes
+`width` and `height` from the handle (`decoder.rs:94-95`), derives a `ColorType`
+from `depth > 8` and alpha (`:155-162`), and the `image` crate allocates
+`width * height * bytes_per_pixel` (`image-0.25.10/src/io/decoder.rs:66-71`,
+`src/io/free_functions.rs:316`); `read_image` then demands exactly
+`width * height * channels * sample_bytes` (`decoder.rs:165-171`, `channels` 3 or
+4 at `:130-132`, `sample_bytes` 1 or 2 at `:135-137`). The cost is 3 bytes per
+signalled pixel for RGB8, 4 for RGBA8, 6 for RGB16, and 8 for RGBA16. A container
+a few hundred bytes long can signal 65,000 × 65,000 — 4.225 Gpx — which asks for
+12.7 GB at 3 bytes and 33.8 GB at 8. libheif's own decoded `heif_image` is alive
+at the same time (`decoder.rs:179-191`), and the `DynamicImage` wrap plus any
+`to_rgb8`/`flatten_to_rgb` copy (`heic.rs:134`, `decode.rs:82-99`) allocate again,
+so the true peak is a multiple of that figure. When the allocation cannot be
+satisfied the process aborts (§8), so the outcome is a dead process rather than a
+`FileOutcome` carrying an error.
+
+libheif has limits aimed at exactly this: `heif_security_limits` carries
+`max_image_size_pixels`, `max_number_of_tiles`, `max_items`,
+`max_memory_block_size`, and `max_total_memory` (`heif_security.h:36-88`); a new
+context gets the global limits by default (`:91-94`); and a context's limits can
+be read and overwritten (`:100-108`). The bundled header does not state the
+numeric defaults, and the wrapper never reads or tightens them
+(`grep -rn "security" src-tauri/vendor/heif-rs/src` prints nothing), so this
+review asserts only that libheif applies its own defaults and does not invent a
+figure. Passing `ptr::null()` as the decoding options (`decoder.rs:185`) is
+documented as allowed (`heif_decoding.h:206-207`) and changes no limit.
+
+**Malformed containers.** A container parse failure and a missing primary handle
+both become `HeifError::Decode` (`decoder.rs:78-92`) and then
+`HeicError::CorruptContainer` at the seam (`heic.rs:66-70`, `:100`); a
+pixel-decode failure becomes `HeifError::Decode` (`decoder.rs:180-187`) and
+`HeicError::Decode` (`heic.rs:73-78`, `:101`). Truncated and garbage inputs are
+covered by the existing seam tests (`heic.rs:432-457`). The wrapper validates
+nothing about the box structure itself: it hands libheif the whole buffer and its
+length (`decoder.rs:78-83`) and libheif's parser does the rest, bounded by the
+security limits above. The one wrapper-side bound that is known to be wrong is the
+one U04 records: the copy loop trusts the *header* dimensions
+(`decoder.rs:225-226`) although the same header warns that the decoded plane can
+differ after rotation, cropping, or mirroring (`heif_image_handle.h:56-79`,
+`heif_decoding.h:198-199`), so a transformed or hostile file can read past the
+plane. That is a crash path, not a bounded error.
+
+**The plugin-load surface.** The first decode or encode calls `heif_init`, which
+loads external modules from the plugin path (`heif_library.h:122-125`); on this
+archive that means `dlopen`ing files found in the directory named by
+`LIBHEIF_PLUGIN_PATH` (§7, Q13). Loading a shared object runs its constructors
+inside this process, so whoever controls that variable and can write into the
+named directory gets code execution in the app. The privileges required are
+exactly those two: write access to the directory, and the ability to set the
+process environment at launch — the same user, or a parent process that launches
+the app. Nothing in this repository sets the variable
+(`grep -rn "LIBHEIF" src-tauri/src scripts` prints nothing) and a HEIC file cannot
+add a plugin path, so the surface is local: someone who can already act as the
+user, or a distribution that ships a plugin directory an unprivileged user can
+write. Two smaller notes: the scan happens once under `Once`, so a later change
+to the directory is not observed; and libheif version-checks the plugin ABI (the
+archive carries "Encoder plugin requires at least libheif version 1.23.6"), which
+raises the bar for a file that merely happens to be named `*.so` but not for an
+attacker who can write one.
+
+Finally, one file can occupy every core without exceeding any app limit: the
+header states the thread setting "only affects libheif itself. The codecs itself
+may still use multi-threaded decoding" (`heif_decoding.h:36`), so the Rayon cap
+bounds files in flight and not threads per file.
+
 ## 10. Seeded questions
 
-`Q01`–`Q06` are answered here; the register and the lifetime map above are the
-evidence base they cite. `Q07`–`Q17` follow in later sections of this document.
+`Q01`–`Q13` are answered here; the register, the lifetime map, and §7–§9 above
+are the evidence base they cite. `Q14`–`Q17` follow in later sections of this
+document.
 
 | ID | Question | Anchor | Answer |
 | --- | --- | --- | --- |
@@ -356,6 +611,13 @@ evidence base they cite. `Q07`–`Q17` follow in later sections of this document
 | Q04 | Can a negative or absurd `stride` from libheif reach `stride as usize` in `copy_pixels`? | `src/decoder.rs:215-231` | Yes — the cast at `:223` has no check at all. `stride` is an `i32` filled by the deprecated `heif_image_get_plane_readonly` (`:215-217`); a negative value becomes ~1.8e19, `y * stride` then overflows `usize` (panic in debug, wrap in release), and `plane.add()` produces a wild pointer that the row copy reads from. A small *positive* stride is the quieter failure: `out_row_bytes` (`:209`) is copied per row from a source row advanced by `stride`, so a stride below `width * channels` reads the next row's bytes as padding and yields wrong pixels. Reads stay read-only and the destination is bounded by `buf`'s length (checked at `:166-171`), so the worst case is a process abort or corrupted output, not a write past the caller's buffer. libheif 1.23.6 returns the plane's positive bytes-per-line, so this is not reachable with well-formed input; the bundled header exists in the shape it does because this exact pattern is the known hazard (`heif_image.h:268-282`). |
 | Q05 | Does the owned `Vec<u8>` really outlive the libheif context, and in what order do the manual `Drop` and field drops run? | `src/decoder.rs:47-49`, `106`, `251-263` | Yes, twice over. `Drop::drop` (`:252-262`) runs its body before any field is dropped, and the body releases the handle (`:256`) and then frees the context (`:259`); after that, fields drop in declaration order — `context`, `handle`, then `_data` (`:44-49`). `_data` is therefore freed strictly after the context on every path. The buffer also keeps its address across the move at `:106`, because moving a `Vec` moves its header, not its heap block, and `_data` is never mutated afterwards; that is what lets `heif_context_read_from_memory_without_copy` keep a bare pointer to it. The handle's release before the context's free is safe even though the wrapper does not require it: the header says handles are ref-counted (`heif_image_handle.h:41-43`). |
 | Q06 | Is `heif_init` called once and never balanced by `heif_deinit`? What is leaked, and for how long? | `src/ffi.rs:12-20` | Yes. `ffi::init` calls `heif_init(NULL)` inside `Once::call_once` (`ffi.rs:13-19`), so it runs at most once per process and cannot be re-run; `heif_deinit` appears nowhere in the crate except the comment at `ffi.rs:10` that explains the choice. The bundled header says the pair is reference counted, that each `heif_init` should be matched, and that "some library memory objects will never be freed if you do not call heif_init()/heif_deinit()" (`heif_library.h:113-131`). What leaks is libheif's process-global state — the plugin registry populated by `heif_init`'s scan of the default plugin path, the codec plugin instances it holds, and library globals. It is bounded and one-time: it does not grow per file, per decoder, or per encode call, and the OS reclaims it at exit. The other consequence is that the default plugin path is scanned exactly once, at first use, which is the plugin question `Q13` takes up. |
+| Q07 | Can a panic escape `write_callback`, and does per-file isolation survive it? | `src/encoder.rs:508-524`; `src-tauri/src/convert.rs:98`; `src-tauri/src/heic.rs:62` | It cannot unwind out. `write_callback` is `unsafe extern "C" fn` (`encoder.rs:508`), so a panic raised inside it reaches the abort shim at the FFI boundary and the process aborts; unwinding into libheif would need `extern "C-unwind"`, which the wrapper does not use. The reachable trigger is `out.extend_from_slice(...)` (`:519`) on capacity overflow, and an allocation failure there also aborts. The guards at `convert.rs:98` and `heic.rs:62` sit above `heif_context_write` (`encoder.rs:424-429`), so neither sees it: one file's encode abort kills the batch, the app, and every worker. Ordinary Rust panics on the encode path are still caught; OOM and C-level faults are not. |
+| Q08 | Is the result of `heif_encoding_options_alloc` checked before use? | `src/encoder.rs:401-412` | No. `options` is stored unchecked at `:401` and passed straight to `heif_context_encode_image` (`:403-409`); only the free is guarded by `!options.is_null()` (`:410-412`). The bundled header makes NULL the expected input — "`options` should be NULL for now" (`heif_encoding.h:346`) — so a failed allocation degrades to the documented default instead of a null dereference, and the guarded free keeps it leak-free. U12 and §6 record the same, so the only cost of the missing check is that the allocation failure is invisible. |
+| Q09 | Which encoder paths are reachable given the seam always requests 4:2:0, 8-bit, non-lossless? | `src/encoder.rs:232-241`, `389-398`; `src-tauri/src/heic.rs:124-130` | Exactly one: `interleaved_chroma` takes `(false, false)` and returns `heif_chroma_interleaved_RGB` (`:234-241`) because `image_depth(Eight) > 8` is false (`:204-210`), and `encode_with_encoder` takes the lossy branch (`:389-395`) with `chroma = "420"` and one of three presets (`:397-398`, `:64-70`). Unreachable from this seam: `heif_encoder_set_lossless` (`:390`), the RGBA/RRGGBB/RRGGBBAA chromas (`:237-239`), the two-byte sample path and 10/12-bit output (`:304-305`, `:475-481`), and seven of `layout_for`'s eight rows (`:192-199`) because `heic.rs:134` always hands over `Rgb8`. Later re-enabling 10-bit output would enter all of them at once. |
+| Q10 | Which color types does `layout_for` accept, and how are grayscale and alpha mapped into the interleaved plane? | `src/encoder.rs:178-202`, `459-470` | Eight: `L8`, `La8`, `Rgb8`, `Rgba8`, `L16`, `La16`, `Rgb16`, `Rgba16` (`:191-201`); anything else is `None` and becomes `ImageError::Unsupported` (`:255`, `:536-539`). Grayscale expands by replicating input channel 0 into R/G/B and, when alpha is present, reading input channel 1 into output channel 3 (`:459-470`); alpha is otherwise carried in the last output channel (`:193-199`). The product reaches none of it: `heic.rs:134` passes `ImageRgb8(image.to_rgb8())`, so the layout is always `(3, 1, 3, false, false)` (`encoder.rs:194`). |
+| Q11 | Which libheif return values are used without a check, and which null pointers are checked? | `src/decoder.rs:94-97`, `218-222`; `src/encoder.rs:320-326`, `339-343`, `401-415` | Used unchecked: the four header accessors at `decoder.rs:94-97` (all plain `int` returns; only the depth gets `.max(0)`), the strides at `decoder.rs:215-223` and `encoder.rs:320-329`, `heif_encoding_options_alloc` at `encoder.rs:401`, and `heif_init`'s `heif_error` at `ffi.rs:17`. Null-checked before use: decode context `decoder.rs:72`, decoded plane `:218`, encode context `encoder.rs:340`, encode plane `:322`, options before free `:410`, out handle before release `:413`, and `err.message` in `ffi.rs:31`. Everything else goes through `ffi::check` (`ffi.rs:24-37`), which reads only `err.code` and copies a message. |
+| Q12 | `with_threads` is never called — what thread count does libheif use, and how does that interact with the Rayon HEIC worker cap? | `src/decoder.rs:113-117`, `174-177`; `heif_decoding.h:34-47` | `with_threads` only sets `config.threads` (`:113-117`), and `grep -rn "with_threads" src-tauri/src` prints nothing, so it stays `None` and the `heif_context_set_max_decoding_threads` call at `:175-177` never runs; libheif's default applies. The bundled header states no number: 0 means tiles decoded in the main thread and 1 means one background thread (`heif_decoding.h:34-35`), the getter returns "either the library default or the value last passed" (`:42-47`), and "the codecs itself may still use multi-threaded decoding" (`:36`) — so this review records the default as undocumented rather than guessing it. The Rayon cap (`convert.rs:69-73`) limits HEIC *files* to `(cores / 6).clamp(1, 3)`, not threads: worst case is that many libde265 pools, plus the global-pool scan (`scan.rs:132-135`) and up to four thumbnail decodes (`src/App.tsx:235`). |
+| Q13 | Is dynamic plugin loading reachable at runtime with the codecs compiled in? | Archive inventory; `heif_library.h:122-125`, `181-185` | Yes, and compiled-in codecs do not close it. `heif_init` calls `register_default_plugins` and then `heif_load_plugins` per directory from `get_plugin_paths` (relocations in `init.cc.o`, quoted in §7), and `plugins_unix.cc.o` imports `dlopen`/`dlsym`/`dlclose`/`dlerror` (`nm -A` on the extracted `lib/libheif.a`). `get_plugin_paths` reads only the environment variable `LIBHEIF_PLUGIN_PATH` (the `getenv` call plus `.rodata.str1.1` offset `0x3c`), while the header documents `LIBHEIF_PLUGIN_PATHS` (`:181-185`), and no built-in directory string is compiled in (`strings -a | grep -c "/usr/"` → `0`). So: reachable by a process that can set that variable and write a `.so` into the named directory — loading runs its constructors in-process — but not by a HEIC file, and nothing here sets the variable, so the scan surface is empty by default. The `libx265.so`/`libx265_main10.so`/`libx265_main12.so` strings are a separate mechanism: they live in x265's own `api.cpp.o`, whose `heifrs_x265_api_get_217` imports `dlopen`/`dlsym`; they are x265's 8/10/12-bit library names, and the seam only ever asks for 8-bit (`heic.rs:128`). |
 
-<!-- Q07-Q17: later tasks -->
+<!-- Q14-Q17: later task -->
 
