@@ -6,6 +6,7 @@ usage() {
 Usage: scripts/ci.sh <subcommand>
 
 Subcommands:
+  trust     Verify the committed codec archives, any extracted libraries, and the vendored heif-rs lock entry
   frontend  Run the frontend tests (npm test) and frontend build (npm run build)
   rust      Run Rust formatting checks (cargo fmt --check) and tests (cargo test --locked)
   build     Run the Tauri release build without bundling, passing --locked to cargo
@@ -14,7 +15,7 @@ Subcommands:
             unshare -rn or bwrap). Not part of `all`. CI_OFFLINE_DIR picks the working directory
             and needs about 8 GiB free; point it at a disk-backed path when the default is a small
             tmpfs
-  all       Run frontend, then rust, then build; stop at the first failure
+  all       Run trust, then frontend, then rust, then build; stop at the first failure
 
 Options:
   -h, --help  Show this help and exit
@@ -30,6 +31,59 @@ cd "$repo_root"
 die() {
   printf '%s\n' "$*" >&2
   exit 1
+}
+
+trust() {
+  echo "==> Codec trust gate"
+  local log
+  log="$(mktemp "${TMPDIR:-/tmp}/heif-trust.XXXXXX")"
+  if ! scripts/heif-artifacts.sh verify 2>&1 | tee "$log"; then
+    rm -f "$log"
+    echo "trust gate: the artifact verifier failed" >&2
+    return 1
+  fi
+  if ! grep -qE '^heif-artifacts: verified 4 committed archives, [0-9]+ extracted libraries$' "$log"; then
+    rm -f "$log"
+    echo "trust gate: the verifier did not report the four committed archives; refusing to certify" >&2
+    return 1
+  fi
+  rm -f "$log"
+
+  # Cargo.lock: exactly one heif-rs entry, version 26.10.3, no source or checksum. The block for a package runs from
+  # its `name =` line to the next `[[package]]`, so this reads the lock as text and needs no jq, python3, or build.
+  local lock="src-tauri/Cargo.lock"
+  local blocks count version
+  blocks="$(awk '
+    /^name = "heif-rs"$/ { inside = 1 }
+    inside && /^\[\[package\]\]$/ { inside = 0; next }
+    inside { print }
+  ' "$lock")"
+  count="$(awk '/^name = "heif-rs"$/{n++} END{print n + 0}' <<<"$blocks")"
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "trust gate: Cargo.lock has no heif-rs package entry" >&2
+    return 1
+  fi
+  if [[ "$count" -ne 1 ]]; then
+    echo "trust gate: Cargo.lock has $count heif-rs package entries; expected 1" >&2
+    return 1
+  fi
+  version="$(awk -F'"' '/^version = /{print $2; exit}' <<<"$blocks")"
+  if [[ "$version" != "26.10.3" ]]; then
+    echo "trust gate: heif-rs is locked to $version; expected 26.10.3" >&2
+    return 1
+  fi
+  if grep -q '^source = ' <<<"$blocks"; then
+    echo "trust gate: heif-rs resolves from a registry source; expected the vendored path package" >&2
+    return 1
+  fi
+  if grep -q '^checksum = ' <<<"$blocks"; then
+    echo "trust gate: heif-rs carries a registry checksum; expected the vendored path package" >&2
+    return 1
+  fi
+
+  echo "trust gate: heif-rs 26.10.3 locked from vendor/heif-rs (path package)"
+  echo "trust gate: PASS"
 }
 
 frontend() {
@@ -187,6 +241,9 @@ offline() {
 }
 
 case "${1-}" in
+  trust)
+    trust
+    ;;
   frontend)
     frontend
     ;;
@@ -200,6 +257,7 @@ case "${1-}" in
     offline
     ;;
   all)
+    trust
     frontend
     rust
     build

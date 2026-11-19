@@ -314,14 +314,11 @@ verify() {
       "$failures" "$archives_checked" "$libs_checked" >&2
     exit 1
   fi
-  # "Cold cache" is reserved for a tree with no bundle directories at all. A directory that exists but holds no
-  # library was counted as a failure above, so it can never reach this line.
-  if [[ ${#dirs[@]} -eq 0 ]]; then
-    printf 'verified %s committed archive(s); no extracted bundle directories (cold cache)\n' "$archives_checked"
-  else
-    printf 'verified %s committed archive(s) and %s extracted librar(y/ies); all match the manifest\n' \
-      "$archives_checked" "$libs_checked"
-  fi
+  # Printed only on full success, after every archive and extracted-library check has passed. A tree with no bundle
+  # directories is a cold cache and reports zero extracted libraries. `scripts/ci.sh trust` asserts the archive count,
+  # so a verifier that checked nothing cannot be mistaken for a passing gate.
+  printf 'heif-artifacts: verified %s committed archives, %s extracted libraries\n' \
+    "$archives_checked" "$libs_checked"
 }
 
 fetch() {
