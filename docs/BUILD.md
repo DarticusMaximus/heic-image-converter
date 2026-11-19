@@ -283,17 +283,25 @@ scripts/ci.sh offline
 The gate needs about 8 GiB of free space because it pays for a cold Rust test
 build. It works in `${CI_OFFLINE_DIR:-${TMPDIR:-/tmp}}`: below 8 GiB free it
 refuses to start, below 12 GiB it warns, and it removes its clone on exit. Point
-`CI_OFFLINE_DIR` at a disk-backed path when the default `/tmp` is a small
-tmpfs:
+`CI_OFFLINE_DIR` at an existing disk-backed path when the default `/tmp` is a
+small tmpfs — a missing directory is refused, not created:
 
 ```bash
+mkdir -p "$HOME/.cache/offline-gate"
 CI_OFFLINE_DIR=$HOME/.cache/offline-gate scripts/ci.sh offline
 ```
 
-It also needs unprivileged user namespaces (`unshare -rn`) or `bwrap
---unshare-net`. With neither available, or with a sandbox that still reaches the
-network, the gate exits 1 and says the offline property was not proven. It never
-reports a pass it could not prove.
+It also needs unprivileged user namespaces (`unshare -rn`) or bubblewrap, which
+it probes with `bwrap --unshare-net --dev-bind / / true`. Without either, the
+gate exits 1:
+
+```
+offline gate: no network isolation available (need unshare -rn or bwrap)
+offline gate: the sandbox still reaches the network; refusing to certify
+```
+
+The first when no wrapper can be started, the second when the sandbox still
+reaches the network. It never reports a pass it could not prove.
 
 What it does not cover: `npm ci`, Vite, and the Tauri release build still need
 the network on a fresh machine. The claim stops at the Rust gate and at targets
