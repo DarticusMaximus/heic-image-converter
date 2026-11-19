@@ -1,0 +1,117 @@
+missing-artifact drill
+repository: /home/darticus/Code/work/image-converter
+commit under test: dfb2fe7133c7fe52ffe0f0f66f9acbb373eea875
+archive: src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+sha256 before: b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+working tree: 0 entries in git status --porcelain
+
+== Drilling the break: move the committed archive aside and drop the heif-rs build cache
+$ mv src-tauri/vendor/heif-bundles/bundle_linux_x64.zip /tmp/opencode/task5/
+$ rm -rf src-tauri/target/debug/build/heif-rs-*
+
+======================================================================
+== 1. cargo build --locked, outside the network namespace (normal network available)
+======================================================================
+$ cd src-tauri && cargo build --locked
+   Compiling heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)
+error: failed to run custom build command for `heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)`
+
+Caused by:
+  process didn't exit successfully: `/home/darticus/Code/work/image-converter/src-tauri/target/debug/build/heif-rs-2394caa529a4f664/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:rerun-if-changed=build.rs
+  cargo:rerun-if-env-changed=HEIF_BINARIES_DIR
+  cargo:rerun-if-changed=/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs/../heif-bundles/manifest.json
+
+  --- stderr
+
+  thread 'main' (3714904) panicked at vendor/heif-rs/build.rs:112:85:
+  heif-rs: committed codec artifact bundle_linux_x64.zip is missing
+    expected at src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+    fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[exit status: 101]
+
+======================================================================
+== 2. The same build inside 'unshare -rn' (no network namespace, no route out)
+======================================================================
+$ cd src-tauri && unshare -rn cargo build --locked
+   Compiling heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)
+error: failed to run custom build command for `heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)`
+
+Caused by:
+  process didn't exit successfully: `/home/darticus/Code/work/image-converter/src-tauri/target/debug/build/heif-rs-2394caa529a4f664/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:rerun-if-changed=build.rs
+  cargo:rerun-if-env-changed=HEIF_BINARIES_DIR
+  cargo:rerun-if-changed=/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs/../heif-bundles/manifest.json
+
+  --- stderr
+
+  thread 'main' (3714918) panicked at vendor/heif-rs/build.rs:112:85:
+  heif-rs: committed codec artifact bundle_linux_x64.zip is missing
+    expected at src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+    fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+[exit status: 101]
+
+======================================================================
+== 3. Repair: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+======================================================================
+note: scripts/heif-artifacts.sh verify currently fails because the committed
+      archive is missing; fetch validates the bytes it downloads against the
+      manifest and does not require the tree to be complete (feature spec
+      decision 7).
+$ scripts/heif-artifacts.sh verify   # before the repair
+==> Committed archives (src-tauri/vendor/heif-bundles)
+heif-rs: bundle_linux_x64.zip is missing from src-tauri/vendor/heif-bundles
+  expected sha256 b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+  actual   sha256 (no such file)
+  fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+failed: 1 problem(s) against 4 committed archive(s) and 1 extracted librar(y/ies)
+[exit status: 1]
+
+$ scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+heif-artifacts: downloading https://github.com/vegidio/binaries-heif/releases/download/26.10.1/bundle_linux_x64.zip
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82 (downloaded from 26.10.1)
+[exit status: 0]
+
+======================================================================
+== 4. Restored tree: verify and build again
+======================================================================
+$ scripts/heif-artifacts.sh verify
+==> Committed archives (src-tauri/vendor/heif-bundles)
+ok bundle_linux_x64.zip 3325156 bytes b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+ok bundle_osx_x64.zip 3158467 bytes 35e17dfc5c6f84a38ddd0f86edfa2a979db7aa462e03431aa5f745946b25a4e2
+ok bundle_osx_arm64.zip 3036209 bytes 18f3faa9abcc36a0ca316fde55848eb1815ca4066613c0451c498498d35dd1b1
+ok bundle_windows_x64.zip 8910372 bytes 5909672143ca081e24f9d1a448932abf1b1d69c869f8b6daeefbda4bc99ae8ed
+==> Extracted libraries (src-tauri/target/*/build/heif-rs-*/out/binaries-heif-bundle-*/)
+ok src-tauri/target/release/build/heif-rs-520d9edfbf6098c8/out/binaries-heif-bundle-26.10.1/lib/libheif.a matches bundle_linux_x64.zip (lib/libheif.a)
+==> Summary
+verified 4 committed archive(s) and 1 extracted librar(y/ies); all match the manifest
+[exit status: 0]
+
+$ cd src-tauri && cargo build --locked
+   Compiling heif-rs v26.10.3 (/home/darticus/Code/work/image-converter/src-tauri/vendor/heif-rs)
+   Compiling heic-image-converter v0.1.0 (/home/darticus/Code/work/image-converter/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.74s
+[exit status: 0]
+
+== Result of the drill
+sha256 after fetch: b5cbed5d08fc79f64b5171cd401fbd62da43333d26b5ad9905354704cf072f82
+build outside the namespace: exit 101 (expected non-zero)
+build inside 'unshare -rn':  exit 101 (expected non-zero)
+verify before fetch:         exit 1 (expected non-zero)
+fetch:                       exit 0 (expected zero)
+verify after fetch:          exit 0 (expected zero)
+build after fetch:           exit 0 (expected zero)
+$ git status --porcelain --untracked-files=all
+[git status entries: 0]
+$ git diff --stat
+[git diff: 0 lines]
