@@ -16,7 +16,10 @@
 #[path = "../vendor/heif-rs/build_support.rs"]
 mod build_support;
 
-use build_support::{Manifest, archive_url, parse_manifest, select, sha256_hex, verify_checksum};
+use build_support::{
+    Manifest, Source, archive_url, parse_manifest, resolve_source, select, sha256_hex,
+    verify_checksum,
+};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -430,6 +433,111 @@ fn the_manifest_names_the_bundle_family() {
         assert!(
             artifact.archive.ends_with(".zip"),
             "{} must be a zip archive",
+            artifact.archive
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Committed artifacts are local-only
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_committed_artifact_is_never_fetched() {
+    let manifest = load_manifest();
+
+    let committed: Vec<_> = manifest.artifacts.iter().filter(|a| a.committed).collect();
+    assert_eq!(
+        committed
+            .iter()
+            .map(|a| a.archive.as_str())
+            .collect::<BTreeSet<_>>(),
+        COMMITTED_ARCHIVES.into_iter().collect::<BTreeSet<_>>(),
+        "the committed set must be exactly the archives the product ships, so this \
+         test cannot pass on an empty or shrunken set"
+    );
+
+    for artifact in committed {
+        let err = resolve_source(artifact, false)
+            .expect_err("a missing committed artifact must never resolve to a fetch");
+        assert!(
+            err.contains(&artifact.archive),
+            "error must name the archive, got: {err}"
+        );
+        assert!(
+            err.contains(&format!(
+                "src-tauri/vendor/heif-bundles/{}",
+                artifact.archive
+            )),
+            "error must name the path the archive belongs at, got: {err}"
+        );
+        assert!(
+            err.contains(&format!(
+                "scripts/heif-artifacts.sh fetch {}",
+                artifact.archive
+            )),
+            "error must name the repair command, got: {err}"
+        );
+        assert!(
+            !err.contains("http"),
+            "a missing committed artifact must not suggest a download, got: {err}"
+        );
+        assert_eq!(
+            resolve_source(artifact, true),
+            Ok(Source::Local),
+            "{} present on disk must be read locally",
+            artifact.archive
+        );
+    }
+
+    let linux = manifest
+        .artifacts
+        .iter()
+        .find(|a| a.archive == "bundle_linux_x64.zip")
+        .expect("the linux x64 archive must be pinned");
+    assert_eq!(
+        resolve_source(linux, false).expect_err("bundle_linux_x64.zip must not be fetched"),
+        concat!(
+            "heif-rs: committed codec artifact bundle_linux_x64.zip is missing\n",
+            "  expected at src-tauri/vendor/heif-bundles/bundle_linux_x64.zip\n",
+            "  fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip"
+        ),
+        "the missing-artifact message is part of the contract"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 11. Uncommitted artifacts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_uncommitted_artifact_may_be_fetched() {
+    let manifest = load_manifest();
+
+    let uncommitted: Vec<_> = manifest.artifacts.iter().filter(|a| !a.committed).collect();
+    assert_eq!(
+        uncommitted.len(),
+        4,
+        "the four non-shipping archives are the only ones that may be fetched"
+    );
+    assert!(
+        uncommitted
+            .iter()
+            .all(|a| !COMMITTED_ARCHIVES.contains(&a.archive.as_str())),
+        "an archive cannot be both committed and fetchable"
+    );
+
+    for artifact in uncommitted {
+        assert_eq!(
+            resolve_source(artifact, false),
+            Ok(Source::Fetch),
+            "{} is not committed, so a missing copy may be downloaded",
+            artifact.archive
+        );
+        assert_eq!(
+            resolve_source(artifact, true),
+            Ok(Source::Local),
+            "{} present on disk must be read locally rather than downloaded again",
             artifact.archive
         );
     }

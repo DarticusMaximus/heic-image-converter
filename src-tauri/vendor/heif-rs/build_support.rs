@@ -173,6 +173,50 @@ pub fn verify_checksum(a: &Artifact, actual_hex: &str) -> Result<(), String> {
     ))
 }
 
+/// Where a pinned codec archive may be obtained from.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The archive must be read from `vendor/heif-bundles/`; there is no other
+    /// permitted source.
+    Local,
+    /// The archive is not committed and may be downloaded, then hash-verified.
+    Fetch,
+}
+
+/// Decides whether an artifact may be fetched or has to be read locally.
+///
+/// A `committed` artifact is offline-only: its bytes are in the tree or the
+/// build fails. Building for a target whose archive is not committed is the one
+/// case that may reach the network, and the caller still verifies the bytes with
+/// [`verify_checksum`] before extracting them.
+///
+/// # Errors
+///
+/// When a committed archive is absent, the error names the archive, the path it
+/// belongs at, and the command that restores it. It deliberately carries no URL:
+/// a missing committed artifact is a repair job, not a download invitation.
+///
+/// ```text
+/// heif-rs: committed codec artifact bundle_linux_x64.zip is missing
+///   expected at src-tauri/vendor/heif-bundles/bundle_linux_x64.zip
+///   fix: scripts/heif-artifacts.sh fetch bundle_linux_x64.zip
+/// ```
+pub fn resolve_source(a: &Artifact, local_archive_present: bool) -> Result<Source, String> {
+    if local_archive_present {
+        return Ok(Source::Local);
+    }
+    if !a.committed {
+        return Ok(Source::Fetch);
+    }
+
+    Err(format!(
+        "heif-rs: committed codec artifact {} is missing\n  \
+         expected at src-tauri/vendor/heif-bundles/{}\n  \
+         fix: scripts/heif-artifacts.sh fetch {}",
+        a.archive, a.archive, a.archive
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // JSON plumbing
 // ---------------------------------------------------------------------------
