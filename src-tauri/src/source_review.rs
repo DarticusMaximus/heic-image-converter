@@ -1,16 +1,18 @@
 //! Completeness and drift harness for the documents that record the HEIC
-//! dependency: `THIRD-PARTY-NOTICES.md` at the repository root and the license
-//! texts under `licenses/`.
+//! dependency: `docs/HEIC-SOURCE-REVIEW.md`, `THIRD-PARTY-NOTICES.md` at the
+//! repository root, and the license texts under `licenses/`.
 //!
 //! A source review is a reading activity; no test can judge whether the prose is
-//! right. What these tests can do is catch the two ways a notice rots: a
-//! component silently dropping out of it, and a committed license text drifting
-//! from the hash recorded beside it. Both read committed files only, resolve the
-//! repository root from `CARGO_MANIFEST_DIR`, and never touch the network.
+//! right. What these tests can do is catch the ways the record rots: a reviewed
+//! file dropping out of the read log, a component silently dropping out of the
+//! notice, and a committed license text drifting from the hash recorded beside
+//! it. Each reads committed files only, resolves the repository root from
+//! `CARGO_MANIFEST_DIR`, and never touches the network.
 
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 /// The repository root, one level above `src-tauri`.
 fn repo_root() -> PathBuf {
@@ -35,6 +37,120 @@ fn sha256_hex(bytes: &[u8]) -> String {
         write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
     }
     hex
+}
+
+// ---------------------------------------------------------------------------
+// S1: the read log covers every file under review
+// ---------------------------------------------------------------------------
+
+/// Every file the review is obliged to have read: the Rust sources of the
+/// vendored crate, its `VENDORED.md`, and the seam that consumes it.
+fn reviewed_files() -> Vec<PathBuf> {
+    let root = repo_root();
+    let vendor = root.join("src-tauri/vendor/heif-rs");
+
+    let mut files: Vec<PathBuf> = WalkDir::new(&vendor)
+        .into_iter()
+        .map(|entry| entry.expect("walk the vendored crate"))
+        .filter(|entry| entry.file_type().is_file())
+        .map(walkdir::DirEntry::into_path)
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .collect();
+
+    files.push(vendor.join("VENDORED.md"));
+    files.push(root.join("src-tauri/src/heic.rs"));
+    files.sort();
+    files
+}
+
+/// The `## 2. Read log` section, up to the next level-two heading. Scoping the
+/// scan to the section keeps a path named in another table — §3 names the same
+/// four fork files — from satisfying a read-log check.
+fn read_log_section(review: &str) -> &str {
+    let (_, after) = review
+        .split_once("## 2. Read log")
+        .expect("the review has a `## 2. Read log` section");
+    after
+        .split_once("\n## ")
+        .map_or(after, |(section, _)| section)
+}
+
+/// The first cell of every read-log row, trimmed. A row is recognised by its
+/// shape — the line starts with `|` and the first cell is a backticked path —
+/// so prose that quotes the same paths cannot satisfy the check.
+fn read_log_paths(section: &str) -> Vec<String> {
+    section
+        .lines()
+        .filter_map(|line| {
+            let mut cells = line.split('|');
+            if !cells.next().is_some_and(|cell| cell.trim().is_empty()) {
+                return None;
+            }
+            let first = cells.next()?.trim();
+            (first.starts_with('`') && first.ends_with('`')).then(|| first.to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn review_covers_every_vendored_source_file() {
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+    let rows = read_log_paths(read_log_section(&review));
+    let files = reviewed_files();
+    let root = repo_root();
+
+    for path in &files {
+        let relative = path
+            .strip_prefix(&root)
+            .expect("every reviewed file lives under the repository root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let needle = format!("`{relative}`");
+        assert!(
+            rows.contains(&needle),
+            "docs/HEIC-SOURCE-REVIEW.md has no read-log row for {needle}"
+        );
+    }
+
+    assert_eq!(
+        files.len(),
+        17,
+        "the review pins 17 files; the walk found {}",
+        files.len()
+    );
+    assert_eq!(
+        rows.len(),
+        files.len(),
+        "§2 should hold one read-log row per reviewed file"
+    );
+
+    println!("vendored files covered: {}", files.len());
+}
+
+// ---------------------------------------------------------------------------
+// S5: the review records the versions and archives it is pinned to
+// ---------------------------------------------------------------------------
+
+#[test]
+fn review_records_the_pinned_provenance() {
+    let review = read_repo_file("docs/HEIC-SOURCE-REVIEW.md");
+
+    let expected = [
+        "26.10.3",
+        "26.10.1",
+        "1.23.6",
+        "bundle_linux_x64.zip",
+        "bundle_osx_x64.zip",
+        "bundle_osx_arm64.zip",
+        "bundle_windows_x64.zip",
+    ];
+
+    for needle in expected {
+        assert!(
+            review.contains(needle),
+            "docs/HEIC-SOURCE-REVIEW.md must record `{needle}`"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
