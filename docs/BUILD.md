@@ -160,16 +160,17 @@ That check is part of the Rust gate below: unformatted code fails
 resolves the repository root from its own path, so it runs from any directory:
 
 ```bash
+scripts/ci.sh trust      # committed codec archives, extracted libraries, and the vendored heif-rs lock entry
 scripts/ci.sh frontend   # npm test, then npm run build
 scripts/ci.sh rust       # cargo fmt --check, then cargo test --locked (in src-tauri)
 scripts/ci.sh build      # npm run tauri -- build --no-bundle -- --locked
-scripts/ci.sh all        # frontend, then rust, then build; stops at the first failure
+scripts/ci.sh all        # trust, then frontend, then rust, then build; stops at the first failure
 ```
 
-The three fast gates above install nothing and delete nothing. On a fresh
-checkout run `npm ci` first; the script will not do it for you. The `offline`
-gate is the exception: it clones HEAD into a temporary directory and removes the
-clone when it exits (see [Offline builds](#offline-builds)). `--help` lists the
+The fast gates above install nothing and delete nothing. On a fresh checkout run
+`npm ci` first; the script will not do it for you. The `offline` gate is the
+exception: it clones HEAD into a temporary directory and removes the clone when
+it exits (see [Offline builds](#offline-builds)). `--help` lists the
 subcommands; a missing or unknown one exits 2.
 
 Three gates, one CI job each:

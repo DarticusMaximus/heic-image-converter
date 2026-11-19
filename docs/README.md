@@ -10,6 +10,7 @@ prototype was built, as input for an SSC adoption pass.
 | [DECISIONS.md](DECISIONS.md) | Decision log with rationale, consequences, alternatives, and open questions |
 | [BUILD.md](BUILD.md) | Prerequisites, codec artifact pin, dev/test/build, the offline gate, packaging, CI, troubleshooting |
 | [HEIC-SOURCE-REVIEW.md](HEIC-SOURCE-REVIEW.md) | Source review of the vendored `heif-rs` crate and the linked codec archive: what was read, the unsafe sites, the findings, and which risks are accepted |
+| [UPGRADE-HEIC.md](UPGRADE-HEIC.md) | The upgrade runbook for `heif-rs` and its bundled codec archives: when to bump, the S0–S9 procedure, verification, rollback, and the upgrade log |
 | [SSC-HANDOFF.md](SSC-HANDOFF.md) | How to convert this into an SSC project: seeds for PRODUCT/BASELINE, suggested stages and features, review checklist |
 
 ## Status
@@ -21,8 +22,10 @@ prototype at commit `3077fb1` and are historical review input;
 
 ## Ground rules for these docs
 
-- They describe the prototype at commit `3077fb1` and are not a statement of
-  current behavior.
+- They mostly describe the prototype at commit `3077fb1` and are not a statement
+  of current behavior. [HEIC-SOURCE-REVIEW.md](HEIC-SOURCE-REVIEW.md) and
+  [UPGRADE-HEIC.md](UPGRADE-HEIC.md) are current records, kept up to date as the
+  dependency moves.
 - These documents are review input. They are not PRODUCT.md, BASELINE.md,
   stage files, or feature specs, and should not be copied into `.ssc/`.
 - If the code and a document disagree, the code wins. Fix the document.

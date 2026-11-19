@@ -8,6 +8,11 @@
 //! assert on the shape of the job blocks a reviewer can see. The repository
 //! root is resolved from `CARGO_MANIFEST_DIR`, the same way the other
 //! committed-file suites do it.
+//!
+//! The upgrade runbook gets the same treatment. A procedure that quietly loses
+//! a step, a file path, or the command that proves the result is a maintenance
+//! trap nobody notices until a dependency bump, so `docs/UPGRADE-HEIC.md` and
+//! the `scripts/ci.sh` dispatch that backs it are pinned here too.
 
 use std::path::{Path, PathBuf};
 
@@ -51,16 +56,31 @@ fn job_lines<'a>(workflow: &'a str, job: &str) -> Vec<&'a str> {
     lines[start..end].to_vec()
 }
 
-/// The index of the first line in `lines` containing `needle`.
+/// The index of the first line in `lines` containing `needle`, ignoring lines
+/// that are commented out. A commented-out call is not a call: without this, a
+/// `# trust` line in the `all` arm would satisfy the ordering check.
 fn line_index(lines: &[&str], needle: &str) -> Option<usize> {
-    lines.iter().position(|line| line.contains(needle))
+    lines
+        .iter()
+        .position(|line| !is_commented_out(line) && line.contains(needle))
+}
+
+/// True for a line that carries no executable content. `#` is shell's and
+/// YAML's comment marker; markdown headings use it too, so markdown assertions
+/// go through `markdown_visible_lines` instead.
+fn is_commented_out(line: &str) -> bool {
+    line.trim_start().starts_with('#')
 }
 
 #[test]
 fn ci_runs_the_trust_gate_before_the_rust_and_build_gates() {
     let workflow = read_repo_file(".github/workflows/ci.yml");
 
-    let trust_runs = workflow.matches("./scripts/ci.sh trust").count();
+    let trust_runs = workflow
+        .lines()
+        .filter(|line| !is_commented_out(line))
+        .filter(|line| line.contains("./scripts/ci.sh trust"))
+        .count();
     assert_eq!(
         trust_runs, 2,
         "ci.yml must run ./scripts/ci.sh trust exactly twice (the `rust` and `build` jobs); found {trust_runs}"
@@ -141,5 +161,184 @@ fn ci_runs_the_offline_gate_only_outside_pull_requests() {
     assert!(
         policy < probe && probe < gate,
         "the `offline` job must relax the sysctl, then probe, then run the gate, in that order"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T3: the upgrade runbook covers every required step
+// ---------------------------------------------------------------------------
+
+/// The literals the runbook must keep: the pins it moves, the files it edits,
+/// and the commands that prove the result. A runbook that renames
+/// `manifest.json` to "the manifest" is no longer executable by someone who has
+/// never seen the pinning scheme.
+const RUNBOOK_LITERALS: [&str; 14] = [
+    "26.10.3",
+    "26.10.1",
+    "manifest.json",
+    "VENDORED.md",
+    "build_support.rs",
+    "docs/HEIC-SOURCE-REVIEW.md",
+    "THIRD-PARTY-NOTICES.md",
+    "licenses/SHA256SUMS",
+    "scripts/heif-artifacts.sh verify",
+    "scripts/ci.sh trust",
+    "scripts/ci.sh offline",
+    "CVE",
+    "rollback",
+    "rehearsal (no version change)",
+];
+
+/// The lines of a markdown document outside `<!-- … -->` blocks. A literal that
+/// only survives in an HTML comment is invisible to a reader, so the runbook
+/// assertions run against these lines rather than the raw file. Headings are
+/// kept: `#` is a heading in markdown, not a comment.
+fn markdown_visible_lines(doc: &str) -> Vec<&str> {
+    let mut visible = Vec::new();
+    let mut in_comment = false;
+    for line in doc.lines() {
+        let mut rest = line;
+        loop {
+            if in_comment {
+                match rest.find("-->") {
+                    Some(end) => {
+                        in_comment = false;
+                        rest = &rest[end + 3..];
+                    }
+                    None => break,
+                }
+            } else {
+                match rest.find("<!--") {
+                    Some(start) => {
+                        if !rest[..start].trim().is_empty() {
+                            visible.push(&rest[..start]);
+                        }
+                        in_comment = true;
+                        rest = &rest[start + 4..];
+                    }
+                    None => {
+                        visible.push(rest);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    visible
+}
+
+#[test]
+fn upgrade_runbook_covers_every_required_step() {
+    let runbook = read_repo_file("docs/UPGRADE-HEIC.md");
+    let visible = markdown_visible_lines(&runbook);
+
+    for needle in RUNBOOK_LITERALS {
+        assert!(
+            visible.iter().any(|line| line.contains(needle)),
+            "docs/UPGRADE-HEIC.md must name `{needle}` on a line a reader sees; a bump that needs a file or command the runbook stopped naming cannot be executed from the document"
+        );
+    }
+
+    for step in 0..=9 {
+        let heading = format!("### S{step}");
+        assert!(
+            visible
+                .iter()
+                .any(|line| line.trim_start().starts_with(&heading)),
+            "docs/UPGRADE-HEIC.md must carry a `{heading}` heading; the S0–S9 sequence is the procedure, and a missing step is a skipped check"
+        );
+    }
+
+    println!("runbook literals covered: {}", RUNBOOK_LITERALS.len());
+}
+
+// ---------------------------------------------------------------------------
+// T4: the runbook and the gate are reachable from the docs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_runbook_and_the_trust_gate_are_linked_from_the_docs() {
+    let index = read_repo_file("docs/README.md");
+    assert!(
+        index.contains("UPGRADE-HEIC.md"),
+        "docs/README.md must list docs/UPGRADE-HEIC.md; an unlinked runbook is one nobody finds at bump time"
+    );
+
+    let build = read_repo_file("docs/BUILD.md");
+    assert!(
+        build.contains("scripts/ci.sh trust"),
+        "docs/BUILD.md must list `scripts/ci.sh trust` among the gates; otherwise the documented gate inventory is behind the script"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T5: the trust gate is part of the full local gate
+// ---------------------------------------------------------------------------
+
+/// One `case` arm of `scripts/ci.sh`: its `<name>)` header through the closing
+/// `;;`. Scoping matters because `trust` also appears in the usage text and as
+/// a function name, so a whole-file search would pass with the arm deleted.
+fn ci_case_arm<'a>(script: &'a str, name: &str) -> Vec<&'a str> {
+    let lines: Vec<&str> = script.lines().collect();
+    let case_start = lines
+        .iter()
+        .position(|line| line.trim() == "case \"${1-}\" in")
+        .unwrap_or_else(|| panic!("scripts/ci.sh has no `case \"${{1-}}\" in` dispatch block"));
+    let header = format!("{name})");
+    let offset = lines[case_start..]
+        .iter()
+        .position(|line| line.trim() == header)
+        .unwrap_or_else(|| panic!("scripts/ci.sh has no `{name})` case arm"));
+    let start = case_start + offset;
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim() == ";;")
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    lines[start..end].to_vec()
+}
+
+/// The lines of `usage()`'s body, so the help text is checked where it is
+/// written rather than anywhere `trust` might appear in the file.
+fn usage_lines(script: &str) -> Vec<&str> {
+    let lines: Vec<&str> = script.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == "usage() {")
+        .unwrap_or_else(|| panic!("scripts/ci.sh defines no usage() function"));
+    let end = lines[start + 1..]
+        .iter()
+        .position(|line| line.trim() == "}")
+        .map_or(lines.len(), |offset| start + 1 + offset);
+    lines[start..end].to_vec()
+}
+
+#[test]
+fn the_trust_gate_is_part_of_the_full_local_gate() {
+    let script = read_repo_file("scripts/ci.sh");
+
+    let dispatch = ci_case_arm(&script, "trust");
+    assert!(
+        dispatch
+            .iter()
+            .any(|line| !is_commented_out(line) && line.trim() == "trust"),
+        "the `trust)` case arm must call the `trust` function; a commented-out call is not a call"
+    );
+
+    let usage = usage_lines(&script);
+    assert!(
+        usage
+            .iter()
+            .any(|line| !is_commented_out(line) && line.trim_start().starts_with("trust ")),
+        "scripts/ci.sh's usage text must list `trust` as a subcommand"
+    );
+
+    let all = ci_case_arm(&script, "all");
+    let trust =
+        line_index(&all, "trust").unwrap_or_else(|| panic!("the `all` arm must call trust"));
+    let frontend =
+        line_index(&all, "frontend").unwrap_or_else(|| panic!("the `all` arm must call frontend"));
+    assert!(
+        trust < frontend,
+        "`all` must run trust before frontend; the archives and the pin are checked before anything that needs them"
     );
 }
