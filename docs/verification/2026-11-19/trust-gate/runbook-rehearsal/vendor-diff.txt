@@ -1,0 +1,319 @@
+# vendor-diff.txt — upgrade runbook S2 executed at the current version
+#
+# Rehearsal, not a bump: the tarball re-vendored here is heif-rs 26.10.3, the
+# version already committed under src-tauri/vendor/heif-rs/. No version was
+# changed, nothing under src-tauri/ was edited, and nothing was rsynced into the
+# repository: the published tree was downloaded, extracted and diffed in
+# /tmp/opencode/heic-rehearsal/ and compared against the committed tree.
+#
+# Machine: Omarchy (Arch-based), Linux 7.2.15-1-omarchy x86_64
+# Toolchain: rustc 1.99.1, cargo 1.99.1, GNU coreutils 9.12, GNU tar 1.35,
+#            curl 8.23.0
+# Date: 2026-11-19 (UTC 2026-11-19T17:22Z)
+#
+# Tarball URL
+#   crates.io API endpoint:
+#     https://crates.io/api/v1/crates/heif-rs/26.10.3/download
+#   final URL after redirect (curl -w '%{url_effective}'):
+#     https://static.crates.io/crates/heif-rs/heif-rs-26.10.3.crate
+#   downloaded size: 33,042 bytes
+#
+# Published checksum (S1; crates.io API /api/v1/crates/heif-rs/26.10.3, version.checksum):
+#   dc5863cecbc91f3b87a0cb508e864f76bafac4b772420ab26b5fa7219c939253
+# Observed checksum (sha256sum of the downloaded file):
+#   dc5863cecbc91f3b87a0cb508e864f76bafac4b772420ab26b5fa7219c939253
+# Verdict: match. It is also the value VENDORED.md records for the tarball it
+# was unpacked from.
+#
+# Commands, in order
+#   $ curl -sSfL -H 'User-Agent: image-converter-rehearsal (darticus)' \
+#       -o /tmp/opencode/heic-rehearsal/heif-rs-26.10.3.crate \
+#       https://crates.io/api/v1/crates/heif-rs/26.10.3/download
+#   $ sha256sum /tmp/opencode/heic-rehearsal/heif-rs-26.10.3.crate
+#   $ tar -xf /tmp/opencode/heic-rehearsal/heif-rs-26.10.3.crate -C /tmp/opencode/heic-rehearsal
+#   $ cd /home/darticus/Code/work/image-converter
+#   $ diff -rq /tmp/opencode/heic-rehearsal/heif-rs-26.10.3 src-tauri/vendor/heif-rs
+#
+# Result: exactly four paths differ, and they are the four that VENDORED.md and
+# docs/HEIC-SOURCE-REVIEW.md §3 record:
+#   edited  build.rs          replaced: manifest-driven resolution, SHA-256
+#                             before extraction, extracted-library hash
+#   edited  Cargo.toml        two [build-dependencies] entries added
+#   added   build_support.rs  present in the vendored tree, absent upstream
+#   added   VENDORED.md       present in the vendored tree, absent upstream
+# The other 18 published files — everything under src/ and tests/, Cargo.lock,
+# Cargo.toml.orig, .cargo_vcs_info.json, LICENSE, README.md — are byte-identical.
+# The published tree holds 20 files; the vendored tree holds 22.
+
+== 1. Summary diff ==
+
+$ diff -rq /tmp/opencode/heic-rehearsal/heif-rs-26.10.3 src-tauri/vendor/heif-rs
+exit status: 1 (differences found)
+
+Files /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/build.rs and src-tauri/vendor/heif-rs/build.rs differ
+Only in src-tauri/vendor/heif-rs: build_support.rs
+Files /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/Cargo.toml and src-tauri/vendor/heif-rs/Cargo.toml differ
+Only in src-tauri/vendor/heif-rs: VENDORED.md
+
+== 2. Full diff: Cargo.toml (the recorded [build-dependencies] edit) ==
+
+$ diff -u /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/Cargo.toml src-tauri/vendor/heif-rs/Cargo.toml
+exit status: 1
+
+--- /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/Cargo.toml	2006-07-23 21:21:28.000000000 -0400
++++ src-tauri/vendor/heif-rs/Cargo.toml	2026-11-18 16:18:57.029578463 -0500
+@@ -82,6 +82,12 @@
+ [build-dependencies.bindgen]
+ version = "0.72.1"
+ 
++[build-dependencies.serde_json]
++version = "1"
++
++[build-dependencies.sha2]
++version = "0.10"
++
+ [build-dependencies.ureq]
+ version = "3"
+ 
+
+The single hunk is the one VENDORED.md § "Edited: Cargo.toml" records:
+[build-dependencies.serde_json] version = "1" and [build-dependencies.sha2]
+version = "0.10" are added. No dependency requirement, feature, or metadata
+line differs.
+
+== 3. Full diff: build.rs (the recorded replacement) ==
+
+$ diff -u /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/build.rs src-tauri/vendor/heif-rs/build.rs
+exit status: 1
+
+--- /tmp/opencode/heic-rehearsal/heif-rs-26.10.3/build.rs	2006-07-23 21:21:28.000000000 -0400
++++ src-tauri/vendor/heif-rs/build.rs	2026-11-19 11:10:53.488156040 -0500
+@@ -5,18 +5,26 @@
+ //!
+ //! Binaries come from: https://github.com/vegidio/binaries-heif/releases
+ //!
+-//! The binaries are normally downloaded from the pinned release and cached under the build's `OUT_DIR`. To build
+-//! offline (or against a custom build of libheif), set the `HEIF_BINARIES_DIR` environment variable to a directory that
+-//! contains `include/` and `lib/` subdirectories laid out like the extracted `bundle_<os>_<arch>.zip` archives.
+-
++//! This is the vendored fork (see `VENDORED.md`). Upstream downloaded the archive for the current target with no
++//! checksum; this script resolves the archive from the committed manifest at `../heif-bundles/manifest.json`, verifies
++//! the archive's SHA-256 *before* extracting it, and verifies the extracted library's SHA-256 afterwards. A mismatch is
++//! fatal, so a swapped or corrupted download fails the build instead of silently becoming the product.
++//!
++//! To build against a custom build of libheif (or fully offline), set the `HEIF_BINARIES_DIR` environment variable to a
++//! directory that contains `include/` and `lib/` subdirectories laid out like the extracted `bundle_<os>_<arch>.zip`
++//! archives. The override is used as-is and skips the manifest and its checksums entirely.
++
++#[allow(dead_code)] // Shared with the test suite; the build script does not read every field.
++mod build_support;
++
++use build_support::{
++    Artifact, Manifest, archive_url, parse_manifest, select, sha256_hex, verify_checksum,
++};
+ use std::env;
+ use std::fs;
+ use std::io;
+ use std::path::{Path, PathBuf};
+ 
+-/// Version of the `binaries-heif` release to download.
+-const VERSION: &str = "26.10.1";
+-
+ /// The bundle archive ships a single static library (`libheif.a`, or `heif.lib` on MSVC) that merges libheif with x265
+ /// (HEVC encode) and libde265 (HEVC decode). Every non-API symbol is renamed with a `heifrs_` prefix, so it can't
+ /// collide with other static copies of those codecs (e.g. a static FFmpeg's x265) in the final program.
+@@ -35,7 +43,7 @@
+ }
+ 
+ /// Returns the directory containing the `include/` and `lib/` subdirectories, either from the `HEIF_BINARIES_DIR`
+-/// override or by downloading + extracting the pinned release.
++/// override or from the pinned, checksum-verified bundle archive for the current target.
+ fn locate_binaries() -> PathBuf {
+     if let Ok(dir) = env::var("HEIF_BINARIES_DIR") {
+         let dir = PathBuf::from(dir);
+@@ -47,53 +55,95 @@
+         return dir;
+     }
+ 
+-    download_and_extract()
++    resolve_from_manifest()
+ }
+ 
+-/// Downloads the bundle archive for the current target into `OUT_DIR` and extracts it.
+-/// Extraction is skipped if a previous build already populated the cache directory.
+-fn download_and_extract() -> PathBuf {
+-    let archive = archive_name();
+-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+-    // Distinct from the old `binaries-heif-{VERSION}` static cache, so a stale static download is never reused.
+-    let cache_dir = out_dir.join(format!("binaries-heif-bundle-{VERSION}"));
++/// The committed pin: `src-tauri/vendor/heif-bundles/`, holding `manifest.json` and the committed archives. This build
++/// script lives in the vendored crate, so the bundle directory is its sibling.
++fn bundle_dir() -> PathBuf {
++    let crate_dir =
++        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
++    crate_dir.join("../heif-bundles")
++}
++
++/// Reads the pinned manifest, selects the archive for the current target, verifies it, extracts it into `OUT_DIR`, and
++/// verifies the extracted library. Returns the directory holding the verified `include/` and `lib/` subdirectories.
++fn resolve_from_manifest() -> PathBuf {
++    let manifest_path = bundle_dir().join("manifest.json");
++    println!("cargo:rerun-if-changed={}", manifest_path.display());
++
++    let json = fs::read_to_string(&manifest_path)
++        .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", manifest_path.display()));
++    let manifest = parse_manifest(&json).unwrap_or_else(|e| panic!("{e}"));
++
++    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
++    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
++    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
++    let artifact =
++        select(&manifest, &target_os, &target_env, &target_arch).unwrap_or_else(|e| panic!("{e}"));
+ 
+-    // Idempotent: a fully extracted cache from a previous build is reused as-is.
+-    if cache_dir.join("lib").is_dir() && cache_dir.join("include").is_dir() {
+-        return cache_dir;
++    // The archive is hashed before a single byte of it is extracted.
++    let bytes = load_archive(&manifest, artifact);
++    if let Err(message) = verify_checksum(artifact, &sha256_hex(&bytes)) {
++        panic!("{message}");
+     }
+ 
+-    let url = format!("https://github.com/vegidio/binaries-heif/releases/download/{VERSION}/{archive}");
+-    eprintln!("heif-rs: downloading {url}");
++    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
++    // The release number is part of the directory name, so a cache from another codec release is never reused.
++    let cache_dir = out_dir.join(format!("binaries-heif-bundle-{}", manifest.release));
++
++    // Idempotent: a fully extracted cache from a previous build is reused as-is, but only after re-checking the
++    // library, so a poisoned or truncated cache directory fails here instead of being linked.
++    if !(cache_dir.join("lib").is_dir() && cache_dir.join("include").is_dir()) {
++        extract_zip(&bytes, &cache_dir);
++    }
+ 
+-    let bytes = download(&url);
+-    extract_zip(&bytes, &cache_dir);
++    verify_library(&cache_dir, artifact);
+     cache_dir
+ }
+ 
+-/// Maps the Cargo target triple components to the release archive file name,
+-/// e.g. `bundle_osx_arm64.zip`. Windows GNU targets use the `mingw` (`.a`) archive, MSVC targets the `windows` (`.lib`)
+-/// one.
+-fn archive_name() -> String {
+-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+-    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap();
+-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+-
+-    let os = match (target_os.as_str(), target_env.as_str()) {
+-        ("linux", _) => "linux",
+-        ("macos", _) => "osx",
+-        ("windows", "gnu") => "mingw",
+-        ("windows", _) => "windows",
+-        (other, _) => panic!("heif-rs: unsupported target OS `{other}`"),
+-    };
+-
+-    let arch = match target_arch.as_str() {
+-        "x86_64" => "x64",
+-        "aarch64" => "arm64",
+-        other => panic!("heif-rs: unsupported target architecture `{other}`"),
+-    };
++/// Returns the archive bytes. A `committed` artifact is local-only: its zip is read from `../heif-bundles/`, and when
++/// that file is absent the build fails naming the archive and the repair command — there is no fallback fetch. Only an
++/// artifact the manifest marks `committed: false` may be downloaded from the pinned URL, and the caller verifies either
++/// source's bytes before extraction.
++fn load_archive(manifest: &Manifest, artifact: &Artifact) -> Vec<u8> {
++    let local = bundle_dir().join(&artifact.archive);
++    let source =
++        build_support::resolve_source(artifact, local.is_file()).unwrap_or_else(|e| panic!("{e}"));
++
++    match source {
++        build_support::Source::Local => {
++            println!("cargo:rerun-if-changed={}", local.display());
++            fs::read(&local)
++                .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", local.display()))
++        }
++        build_support::Source::Fetch => {
++            let url = archive_url(manifest, artifact);
++            eprintln!("heif-rs: downloading {url}");
++            download(&url)
++        }
++    }
++}
+ 
+-    format!("bundle_{os}_{arch}.zip")
++/// Hashes the extracted static library and compares it against the artifact's recorded `lib_sha256`. This is the
++/// second layer of the pin: the archive hash proves what was downloaded, and this proves what is about to be linked.
++fn verify_library(cache_dir: &Path, artifact: &Artifact) {
++    let lib_path = cache_dir.join(&artifact.lib);
++    let bytes = fs::read(&lib_path)
++        .unwrap_or_else(|e| panic!("heif-rs: cannot read {}: {e}", lib_path.display()));
++    let actual = sha256_hex(&bytes);
++    if !artifact.lib_sha256.eq_ignore_ascii_case(&actual) {
++        panic!(
++            "heif-rs: {} failed its checksum\n  expected sha256 {}\n  actual   sha256 {}\n  \
++             fix: scripts/heif-artifacts.sh fetch {}\n  \
++             then delete {} to force a clean extraction",
++            artifact.lib,
++            artifact.lib_sha256,
++            actual,
++            artifact.archive,
++            cache_dir.display()
++        );
++    }
+ }
+ 
+ /// Downloads the given URL into memory, following redirects.
+@@ -188,7 +238,10 @@
+ /// linker simply reports the missing symbols as before.
+ fn link_compiler_rt_builtins() {
+     let cc = env::var("CC").unwrap_or_else(|_| "clang".into());
+-    let Ok(output) = std::process::Command::new(cc).arg("-print-runtime-dir").output() else {
++    let Ok(output) = std::process::Command::new(cc)
++        .arg("-print-runtime-dir")
++        .output()
++    else {
+         return;
+     };
+     if !output.status.success() {
+
+What the build.rs hunks show, against VENDORED.md § "Edited: build.rs":
+- `const VERSION: &str = "26.10.1"` is gone; the release comes from the manifest.
+- `download_and_extract()` and `archive_name()` are replaced by
+  `resolve_from_manifest()`, `load_archive()` and `verify_library()`, all routed
+  through the added `build_support` module.
+- `HEIF_BINARIES_DIR` is still used as-is when set.
+- The archive's SHA-256 is verified before extraction (the `verify_checksum`
+  call in `resolve_from_manifest`), and the extracted library is hashed on every
+  run (`verify_library`).
+- A `committed: true` archive is local-only: `load_archive` reads it from
+  `../heif-bundles/` and falls back to the pinned URL only for an artifact the
+  manifest marks `committed: false`.
+- The replacement's failure message names the archive, both hashes and
+  `scripts/heif-artifacts.sh fetch <archive>`.
+
+Unchanged, as VENDORED.md claims: `main()`, `emit_link_directives()` (including
+`link_compiler_rt_builtins()` for the macOS workaround) and `generate_bindings()`.
+They appear in both files and are outside every hunk; the only hunk that touches
+one of them is `link_compiler_rt_builtins`'s `Command` chain, reformatted by
+rustfmt with no behaviour change (`.arg(...)`/`.output()` split across lines).
+
+== 4. The two added files ==
+
+`build_support.rs` — only in the vendored tree, 277 lines. There is no upstream
+file to diff against, which is why `diff -rq` reports it as present in one side
+only. It holds pure helpers (manifest parse, target selection, URL rendering,
+hex SHA-256, checksum verification, local-vs-fetch policy) and is compiled by
+`build.rs` and, through `#[path = ...]`, by `src-tauri/src/codec_artifacts.rs`.
+
+`VENDORED.md` — only in the vendored tree, 120 lines. This is the fork record
+itself: upstream version and commit, the tarball hash, the two edits, the two
+additions, the archive release, and the re-vendor procedure.
+
+== 5. Nothing else differs ==
+
+`diff -rq` printed no other line, and it prints a line for every file whose bytes
+differ or that exists on one side only. So the 18 remaining published files are
+byte-identical to the vendored copies. In particular `Cargo.toml.orig`,
+`Cargo.lock` and `.cargo_vcs_info.json` are untouched — the review's §3 claim
+that the vendored tree is upstream plus exactly this fork holds at 26.10.3.
