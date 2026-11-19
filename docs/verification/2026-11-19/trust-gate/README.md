@@ -43,19 +43,80 @@ The three break logs and `trust-green.log` are one set: the gate's clean run,
 then each single mutation, its failure output, and its restore. The rehearsal
 folder is the runbook's own evidence; `docs/UPGRADE-HEIC.md` §8 cites it.
 
+## Full local gate
+
+Observed on the clean committed tree at
+`d055f24c1e31579ad1900ec979b24349811d1925` (`git status --porcelain` empty
+before and after), from the repo root:
+
+```
+scripts/ci.sh all
+```
+
+Exit 0, 126 s wall clock. The four gates ran in the committed order — trust
+first, then frontend, rust, build — and none was skipped:
+
+| Gate | Observed |
+| --- | --- |
+| `trust` | `==> Codec trust gate` is the first line of the output; `heif-artifacts: verified 4 committed archives, 3 extracted libraries`; `trust gate: heif-rs 26.10.3 locked from vendor/heif-rs (path package)`; `trust gate: PASS` |
+| `frontend` | `Test Files 2 passed (2)`, `Tests 37 passed (37)`; vite build `✓ built in 127ms` |
+| `rust` | `cargo fmt --check` silent; `running 88 tests`, `test result: ok. 87 passed; 0 failed; 1 ignored` |
+| `build` | `npm run tauri -- build --no-bundle -- --locked` → ``Finished `release` profile [optimized] target(s) in 2m 01s``, `Built application at: src-tauri/target/release/heic-image-converter` |
+
+The offline gate needs a disk-backed working directory on this machine: the
+default `/tmp` is a 16 GiB tmpfs with about 5 GiB free, under the gate's 8 GiB
+floor. It ran as:
+
+```
+CI_OFFLINE_DIR="$HOME/.cache/offline-gate" scripts/ci.sh offline
+```
+
+Exit 0, 63 s wall clock. Observed
+`offline gate: work dir: /home/darticus/.cache/offline-gate (55 GiB free)`,
+`offline gate: isolation: unshare -rn`, and the positive control reaching
+`1.1.1.1:443` outside the sandbox while failing inside it. The clone of HEAD
+carried no `src-tauri/target`, so every dependency was compiled inside the
+sandbox (416 lines beginning `   Compiling`) with `CARGO_NET_OFFLINE=true`, and
+cargo reported
+``Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 01s``.
+The gate ended:
+
+```
+offline gate: PASS (HEAD d055f24c1e31579ad1900ec979b24349811d1925, isolation: unshare -rn)
+```
+
+The run reported `87 passed; 1 ignored` and no `heif-rs: downloading` line (that
+string is an assertion in the gate, so a quiet download would still fail it).
+The throwaway clone was removed on exit; `$HOME/.cache/offline-gate` held no
+leftover `offline-gate.*` directory afterwards.
+
+The feature-level checks were re-run on the same tree:
+`cd src-tauri && cargo test trust_gate` → 5 passed, 0 failed;
+`cd src-tauri && cargo fmt --check` → exit 0; `scripts/ci.sh trust` →
+`trust gate: PASS`.
+
+Full transcripts of the two gate runs were captured locally while they ran
+(`/tmp/opencode/task8/ci-all.log`, `/tmp/opencode/task8/ci-offline.log`) and are
+deliberately not committed; the commands above reproduce them.
+
 ## Hosted run
 
-**Not yet observed.** Task 8 owns the hosted run and the full local gate
-(`scripts/ci.sh all` and `scripts/ci.sh offline`); this task records only the
-local trust gate, the breaks, and the rehearsal. No URL, job list, or duration
-is claimed here. When Task 8 pushes, replace this paragraph with the run URL,
-the `rust`, `build`, and `offline` job names, and their durations, or state
-plainly that no run was observed if push access is unavailable.
+**Pending push.** The push to `main` triggers `.github/workflows/ci.yml`, which
+runs four jobs: `Frontend`, `Rust`, and `Release build` on every change, and
+`Offline build` on every event that is not a pull request. The run has not
+happened yet — this evidence was committed locally and not pushed — so no
+result, URL, or duration is claimed. The fields below are to be filled from the
+run page once the push lands:
 
-- Run URL: not yet recorded
-- Jobs: not yet recorded (`frontend`, `rust`, `build` on every change; `offline`
-  only off pull requests)
-- Durations: not yet recorded
+- Run URL: pending push
+- Triggering commit: pending push (expected to be the commit that lands this
+  evidence, a child of `d055f24`)
+- Jobs and results: pending push (`Frontend`, `Rust`, `Release build`,
+  `Offline build`)
+- Durations: pending push
+
+The local runs above are the reference the hosted run gets checked against: same
+gates, same order, same `trust gate: PASS` and `offline gate: PASS` lines.
 
 ## Boundary
 
