@@ -169,10 +169,13 @@ What this evidence does **not** establish:
   bash 3.2.57 on this Linux machine — the shell version macOS ships, not the
   macOS toolchain, filesystem or codec archive. The macOS trust gate on a Mac
   remains unrun.
-- **No hosted CI run covers this tree.** The last green four-job run is
-  `44591752926` at `c06fcea`; the feature-06 work is commit `43c94d3`, so no
-  GitHub runner has seen it. The release workflow change in particular has
-  never executed.
+- **A hosted CI run now covers this tree.** At the time of this record the last
+  green four-job run was `44591752926` at `c06fcea`; the feature-06 work was
+  commit `43c94d3`, so no runner had seen it. That gap closed on 2026-11-20:
+  run
+  [44772304542](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44772304542)
+  at `ab67952` is green on all four jobs, including the offline gate. The
+  release workflow (tag-triggered) still has never executed.
 - **The offline gate does cover the feature commit, locally.** After `43c94d3`
   was committed, `scripts/ci.sh offline` was run against it and passed:
   `offline-post-commit.log` (SHA-256 `fe59e571…`) shows the sandboxed clone

@@ -526,7 +526,14 @@ signing). Use the GitHub Actions workflow:
   caught `offline` failing on a cold registry cache, before any compile, which the
   warm step fixes. The rerun,
   [44591752926](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44591752926),
-  is green on all four jobs. The evidence README records both.
+  is green on all four jobs. The evidence README records both. The hardening
+  commit and its docs were pushed on 2026-11-20; run
+  [44772304542](https://github.com/DarticusMaximus/heic-image-converter/actions/runs/44772304542)
+  at `ab67952` is green on all four jobs — Frontend 24 s, Rust 3 m 35 s,
+  Offline 4 m 59 s, Release build 29 m 3 s. The release job's `apt-get` step
+  stalled on the runner for roughly twenty minutes before completing; the same
+  step finished in seconds in the Rust job, so that time is runner noise, not
+  build time.
 - `.github/workflows/release.yml` — triggered by a `v*` tag or manually.
   Matrix: Ubuntu 24.04, Windows latest, macOS arm64, macOS x64. Uses
   `tauri-apps/tauri-action` to create a draft release with installers.
