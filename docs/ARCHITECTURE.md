@@ -19,7 +19,7 @@
 | Image decode | `image` 0.25.10 (JPEG/PNG/WebP/TIFF/BMP/GIF) and `heif-rs` 26.10.3 (HEIC/HEIF, exact pin, vendored and patched) |
 | Codec payload | statically linked libheif 1.23.6 + libde265 + x265, pinned by a committed manifest and checksum-verified before extraction |
 | Test count | Whatever `cargo test` (in `src-tauri`) and `npm test` report; this table does not restate a total that would drift |
-| Source size | ~7,900 lines total (538 Rust conversion, 547 App, 1,124 CSS) |
+| Source size | ~10,600 lines total (7,654 Rust in `src-tauri/src`, 547 App, 1,124 CSS) |
 
 ## Shape
 
@@ -57,7 +57,7 @@ network call at runtime.
 
 ## Rust modules
 
-### `src-tauri/src/lib.rs` (147 lines)
+### `src-tauri/src/lib.rs` (151 lines)
 
 Owns the Tauri builder, plugins, and command surface.
 
@@ -161,7 +161,7 @@ Encoders:
 - HEIC: `heic::encode` after alpha is flattened onto white; the seam owns the
   quality/preset mapping, 4:2:0 chroma, and 8-bit output.
 
-### `src-tauri/src/heic.rs` (518 lines)
+### `src-tauri/src/heic.rs` (729 lines)
 
 The single adapter between this product and the HEIC crate. It is the only file
 under `src-tauri/src/` allowed to name the crate; `decode.rs`, `scan.rs`,
@@ -205,13 +205,16 @@ silently widens it to `Encode`, which a unit test catches on the bump.
 
 Panic containment lives here too: every entry point runs its work through a
 private `guard(stage, f)` built on `catch_unwind`, so an escaped libheif panic
-becomes `HeicError::Panic` instead of unwinding through a Rayon worker.
+becomes `HeicError::Panic` instead of unwinding through a Rayon worker. The
+guard also downcasts the panic payload and emits one line carrying the cause
+and its source location, so support can see why a file was rejected; the
+returned error still renders as before.
 `convert::convert_all` keeps its own `catch_unwind` as the backstop for
 non-HEIC decode panics and for writes. `HeicError` never leaves the Rust core:
 `decode.rs` renders it with `Display` into the `String` its callers already
 return.
 
-### `src-tauri/src/estimate.rs` (165 lines)
+### `src-tauri/src/estimate.rs` (268 lines)
 
 - Picks up to `MAX_SAMPLES = 3` images spread across the eligible list
   (indices `0`, midpoint, last), then appends the rest as fallbacks.

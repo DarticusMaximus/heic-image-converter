@@ -6,6 +6,13 @@ vendor-diff half (S0, S1, S2, S5); Task 6 recorded the hash half (S3, S4) and th
 maintenance and gate steps (S6–S9), with the archive re-check in
 `hash-recheck.txt`.
 
+> **Later change.** The `build.rs` diff recorded below predates the hardening
+> feature (2026-11-19), which added the archive-hash-keyed cache, the extracted
+> `include/` verification, and the `bindings.rs` sidecar. The structural claim
+> this file makes — exactly four paths differ from the published crate — still
+> holds; `src-tauri/vendor/heif-rs/VENDORED.md` and `docs/BUILD.md` describe the
+> current fork. The transcript is kept as recorded.
+
 **No version was changed.** The rehearsal is same-version: the crates.io tarball
 downloaded here is `heif-rs` `26.10.3`, the version already vendored at
 `src-tauri/vendor/heif-rs/`, and the archive release stays `26.10.1`. Nothing

@@ -16,9 +16,13 @@ prototype was built, as input for an SSC adoption pass.
 ## Status
 
 The project now uses SSC artifacts under `.ssc/`: product vision, the staged
-plan, stage files, and feature specs. The documents in this folder describe the
-prototype at commit `3077fb1` and are historical review input;
-[BEHAVIOR.md](BEHAVIOR.md) carries the current dated verification matrix.
+plan, stage files, and feature specs. The documents in this folder began as a
+snapshot of the prototype at commit `3077fb1` and remain review input, though
+stage 01 refreshed [ARCHITECTURE.md](ARCHITECTURE.md), [BUILD.md](BUILD.md),
+and [DECISIONS.md](DECISIONS.md) and added
+[HEIC-SOURCE-REVIEW.md](HEIC-SOURCE-REVIEW.md) and
+[UPGRADE-HEIC.md](UPGRADE-HEIC.md). [BEHAVIOR.md](BEHAVIOR.md) carries the
+current dated verification matrix.
 
 ## Ground rules for these docs
 

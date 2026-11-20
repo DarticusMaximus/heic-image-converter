@@ -470,7 +470,8 @@ owning stage is named for each.
    the row now states the scope. The earlier Manual-only wording ("decoded our
    HEIC to PNG at correct dimensions") overstated what had been checked; the
    round-trip test now carries the automated half. Evidence: OBSERVATIONS.md
-   §M8. Owning stage: 01 (HEIC pipeline trust).
+   §M8. Owning stage: 02 (moved from stage 01 when it was re-scoped to the
+   trust work).
 
 7. **"HEIC batch uses fewer workers" was mislabelled as automated.** No test
    exercises the HEIC branch of the pool-sizing formula; the previous matrix
@@ -485,7 +486,8 @@ owning stage is named for each.
      'Show results'" wording is wrong. Evidence: OBSERVATIONS.md §M6. Owning
      stage: 03.
    - HEIC output through the UI was validated on one file this run (M8), not
-     the six the previous matrix mentioned. Owning stage: 01.
+     the six the previous matrix mentioned. Owning stage: 02 (moved from stage
+     01 when it was re-scoped).
    - The matrix now cites only the fixtures and unit tests that exist in the
      executed suite; the previous scan/thumbnail rows are outside this
      26-row set and their tests remain listed under Automated tests.
@@ -495,7 +497,9 @@ owning stage is named for each.
      removed from the Privacy section, but Spec E scoped this pass to the
      Privacy sentence and forbade touching the rest of the file, so it was
      left in place rather than silently edited. It must be either backed by the
-     runtime capture or softened when that work lands. Owning stage: 04.
+     runtime capture or softened when that work lands. Softened on 2026-11-20
+     to "nothing is ever sent anywhere"; the runtime capture still belongs to
+     stage 04.
    - Spec E asked the Install section to state that no release has been
      published "(the repository has no remote)". That parenthetical is false:
      `git remote -v` shows `origin` on GitHub. The verifiable part is stated

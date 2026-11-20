@@ -1,5 +1,7 @@
 # HEIC Image Converter
 
+> **AI-built:** apart from its third-party libraries, this project is AI-coded.
+
 A clean, fast, offline desktop app for converting images — built because
 converting HEIC photos should not require uploading your camera roll to a
 website that swears it only touches them "client side".
@@ -14,7 +16,8 @@ accounts, no cloud, no telemetry.
 - **HEIC is everywhere and nothing opens it.** Free GUI converters either
   don't exist, are Windows-only, or are buried in a shareware installer.
 - **Online converters want your files.** Even the "client-side" ones are a
-  promise you cannot verify. This app never opens a socket.
+  promise you cannot verify. This app has no upload path: nothing is ever sent
+  anywhere.
 - **CLI tools are fine if you already live in a terminal.** Most people don't.
 
 ## Features
@@ -110,6 +113,10 @@ The [docs](docs/) folder is the project's review trail:
 - [Decisions](docs/DECISIONS.md) — why it is built this way, and the cost of
   each choice.
 - [Build](docs/BUILD.md) — prerequisites, packaging, CI, troubleshooting.
+- [HEIC source review](docs/HEIC-SOURCE-REVIEW.md) — what was read in the
+  vendored wrapper and codec archive, the unsafe sites, and the accepted risks.
+- [HEIC upgrade runbook](docs/UPGRADE-HEIC.md) — when and how to bump the
+  wrapper and codec archive, with rollback.
 - [SSC handoff](docs/SSC-HANDOFF.md) — briefing for converting this prototype
   into an SSC project (`ssc-plan` brownfield adoption).
 
@@ -129,6 +136,8 @@ GPL-3.0-or-later. See [LICENSE](LICENSE).
 The bundled codec stack and its license obligations are recorded in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-The strong copyleft is a direct consequence of bundling **x265** for HEIC
-encoding, which is GPL-licensed. If you need a permissively licensed build,
-remove the `Heic` output variant and the `heif-rs` encoder side.
+The strong copyleft is a direct consequence of the bundled codec archive,
+which merges **x265** (GPL-licensed) with libheif and libde265 into one static
+library. Removing the `Heic` output variant does not remove x265: the archive
+links it regardless of which output paths the app calls. A permissively
+licensed build needs a different HEIC codec stack.
